@@ -73,7 +73,8 @@ def test_default_configs_use_paper_scale_values():
     assert stage2.vae_loss_weight is None
     assert stage2.flow_matching_loss_weight is None
     assert stage2.reference_kl_weight is None
-    assert inference.denoising_steps == 16
+    assert inference.num_denoise_steps == 16
+    assert inference.sampler == "euler"
     assert inference.cfg_scale == 7.0
     assert inference.max_new_tokens == 32
     assert inference.condition_strategy == "clean_condition_repaint"

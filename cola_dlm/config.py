@@ -12,6 +12,7 @@ ConditionStrategy = Literal[
     "left_pad",
     "right_pad",
 ]
+SamplerName = Literal["euler", "heun"]
 
 
 def _require_positive(name: str, value: int | float) -> None:
@@ -233,15 +234,18 @@ class InferenceConfig:
     vae: VAEConfig = field(default_factory=VAEConfig)
     dit: DiTConfig = field(default_factory=DiTConfig)
     diffusion: DiffusionConfig = field(default_factory=DiffusionConfig)
-    denoising_steps: int = 16
+    num_denoise_steps: int = 16
+    sampler: SamplerName = "euler"
     cfg_scale: float = 7.0
     max_new_tokens: int = 32
     condition_strategy: ConditionStrategy = "clean_condition_repaint"
 
     def __post_init__(self) -> None:
-        _require_positive("denoising_steps", self.denoising_steps)
+        _require_positive("num_denoise_steps", self.num_denoise_steps)
         _require_non_negative("cfg_scale", self.cfg_scale)
         _require_positive("max_new_tokens", self.max_new_tokens)
+        if self.sampler not in ("euler", "heun"):
+            raise ValueError("sampler must be 'euler' or 'heun'")
         if self.condition_strategy not in (
             "clean_condition_repaint",
             "partial_repaint",

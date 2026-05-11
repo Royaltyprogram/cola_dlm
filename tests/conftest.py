@@ -97,7 +97,7 @@ def tiny_inference_config(
         vae=tiny_vae_config,
         dit=tiny_dit_config,
         diffusion=tiny_diffusion_config,
-        denoising_steps=2,
+        num_denoise_steps=2,
         cfg_scale=1.0,
         max_new_tokens=4,
     )
