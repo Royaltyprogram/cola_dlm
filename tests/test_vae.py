@@ -3,7 +3,7 @@ import math
 import pytest
 import torch
 
-from cola_dlm.vae import DiagonalGaussianPosterior, vae_logsnr
+from cola_dlm.vae import DiagonalGaussianPosterior, TextVAEEncoder, vae_logsnr
 
 
 def test_vae_public_exports_are_core_utilities():
@@ -11,6 +11,7 @@ def test_vae_public_exports_are_core_utilities():
 
     assert vae.__all__ == (
         "DiagonalGaussianPosterior",
+        "TextVAEEncoder",
         "vae_logsnr",
     )
 
@@ -119,3 +120,42 @@ def test_vae_logsnr_increases_with_signal_and_decreases_with_noise():
 
     assert higher_signal > base
     assert higher_noise < base
+
+
+def test_text_vae_encoder_returns_per_token_posterior():
+    torch.manual_seed(0)
+    encoder = TextVAEEncoder(
+        vocab_size=23,
+        latent_dim=3,
+        num_layers=1,
+        hidden_size=8,
+        ffn_size=16,
+        num_attention_heads=2,
+        use_rope=False,
+    )
+    token_ids = torch.randint(0, 23, (2, 5))
+
+    posterior = encoder(token_ids)
+
+    expected_shape = (2, 5, 3)
+    assert posterior.mu.shape == expected_shape
+    assert posterior.logvar.shape == expected_shape
+
+
+def test_text_vae_encoder_is_strictly_causal(tiny_vae_config):
+    torch.manual_seed(0)
+    encoder = TextVAEEncoder(config=tiny_vae_config)
+    encoder.eval()
+    token_ids = torch.tensor([[1, 2, 3, 4, 5, 6], [6, 5, 4, 3, 2, 1]])
+    changed_future = token_ids.clone()
+    changed_future[:, 3:] = torch.tensor([[9, 10, 11], [11, 10, 9]])
+
+    with torch.no_grad():
+        posterior = encoder(token_ids)
+        changed_posterior = encoder(changed_future)
+
+    assert torch.allclose(posterior.mu[:, :3, :], changed_posterior.mu[:, :3, :])
+    assert torch.allclose(
+        posterior.logvar[:, :3, :],
+        changed_posterior.logvar[:, :3, :],
+    )
