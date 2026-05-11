@@ -4,10 +4,12 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+from cola_dlm.block_causal_mask import build_packed_dit_inputs
 from cola_dlm.config import Stage2Config
 from cola_dlm.dit import BlockCausalTextDiT
 from cola_dlm.stage2 import (
     Stage2Loss,
+    compute_stage2_loss,
     compute_stage2_vae_loss,
     create_frozen_reference_encoder,
     reference_kl,
@@ -28,11 +30,13 @@ def test_stage2_public_surface_starts_with_reference_encoder_helper():
         "create_frozen_reference_encoder",
         "reference_kl",
         "compute_stage2_vae_loss",
+        "compute_stage2_loss",
     )
     assert stage2.Stage2Loss is Stage2Loss
     assert stage2.create_frozen_reference_encoder is create_frozen_reference_encoder
     assert stage2.reference_kl is reference_kl
     assert stage2.compute_stage2_vae_loss is compute_stage2_vae_loss
+    assert stage2.compute_stage2_loss is compute_stage2_loss
 
 
 def test_create_frozen_reference_encoder_copies_values_without_shared_storage(
@@ -319,6 +323,131 @@ def test_stage2_config_weights_and_explicit_overrides_control_total_loss(
         )
 
 
+def test_compute_stage2_loss_returns_finite_scalar_components(
+    tiny_stage2_config: Stage2Config,
+):
+    vae, reference_encoder, dit = _make_stage2_modules(tiny_stage2_config)
+    token_ids = _make_stage2_token_ids(tiny_stage2_config)
+
+    loss = compute_stage2_loss(
+        vae,
+        reference_encoder,
+        dit,
+        token_ids,
+        stage2_config=tiny_stage2_config,
+        generator=torch.Generator().manual_seed(101),
+    )
+
+    for name, value in loss.as_dict().items():
+        assert value.shape == (), name
+        assert torch.isfinite(value), name
+    assert loss.flow_matching_loss.item() >= 0.0
+
+
+def test_stage2_packed_clean_history_is_detached_but_noisy_targets_backpropagate(
+    tiny_stage2_config: Stage2Config,
+):
+    z0 = torch.randn(
+        2,
+        tiny_stage2_config.dit.sequence_length,
+        tiny_stage2_config.dit.latent_dim,
+        requires_grad=True,
+    )
+    zt = z0 * 2.0
+
+    packed = build_packed_dit_inputs(
+        z0,
+        zt,
+        block_size=tiny_stage2_config.dit.block_size,
+    )
+
+    clean_length = tiny_stage2_config.dit.sequence_length
+    clean_length -= tiny_stage2_config.dit.block_size
+    clean_probe = packed.latents[:, :clean_length].square().sum()
+    noisy_probe = packed.latents[:, clean_length:].square().sum()
+    clean_grad = None
+    if clean_probe.requires_grad:
+        clean_grad = torch.autograd.grad(
+            clean_probe,
+            z0,
+            allow_unused=True,
+            retain_graph=True,
+        )[0]
+    noisy_grad = torch.autograd.grad(noisy_probe, z0, allow_unused=True)[0]
+
+    if clean_grad is not None:
+        torch.testing.assert_close(clean_grad, torch.zeros_like(z0))
+    assert noisy_grad is not None
+    assert torch.count_nonzero(noisy_grad).item() > 0
+
+
+def test_compute_stage2_loss_backward_reaches_trainable_vae_and_dit(
+    tiny_stage2_config: Stage2Config,
+):
+    vae, reference_encoder, dit = _make_stage2_modules(tiny_stage2_config)
+    token_ids = _make_stage2_token_ids(tiny_stage2_config)
+
+    loss = compute_stage2_loss(
+        vae,
+        reference_encoder,
+        dit,
+        token_ids,
+        stage2_config=tiny_stage2_config,
+        generator=torch.Generator().manual_seed(103),
+    )
+    loss.loss.backward()
+
+    assert _has_nonzero_grad(vae.parameters())
+    assert _has_nonzero_grad(dit.parameters())
+
+
+def test_compute_stage2_loss_backward_leaves_reference_encoder_without_grad(
+    tiny_stage2_config: Stage2Config,
+):
+    vae, reference_encoder, dit = _make_stage2_modules(tiny_stage2_config)
+    token_ids = _make_stage2_token_ids(tiny_stage2_config)
+
+    loss = compute_stage2_loss(
+        vae,
+        reference_encoder,
+        dit,
+        token_ids,
+        stage2_config=tiny_stage2_config,
+        generator=torch.Generator().manual_seed(107),
+    )
+    loss.loss.backward()
+
+    assert all(parameter.grad is None for parameter in reference_encoder.parameters())
+
+
+@pytest.mark.parametrize("prediction_type", ["velocity", "x0"])
+def test_compute_stage2_loss_prediction_type_paths_are_finite(
+    tiny_stage2_config: Stage2Config,
+    prediction_type: str,
+):
+    config = replace(
+        tiny_stage2_config,
+        diffusion=replace(
+            tiny_stage2_config.diffusion,
+            prediction_type=prediction_type,
+        ),
+    )
+    vae, reference_encoder, dit = _make_stage2_modules(config)
+    token_ids = _make_stage2_token_ids(config)
+
+    loss = compute_stage2_loss(
+        vae,
+        reference_encoder,
+        dit,
+        token_ids,
+        stage2_config=config,
+        generator=torch.Generator().manual_seed(109),
+    )
+
+    assert torch.isfinite(loss.loss)
+    assert torch.isfinite(loss.flow_matching_loss)
+
+
 def _make_output(
     logits: torch.Tensor,
     *,
@@ -350,3 +479,30 @@ def _make_posterior(
     if logvar is None:
         logvar = torch.zeros_like(mu)
     return DiagonalGaussianPosterior(mu=mu, logvar=logvar)
+
+
+def _make_stage2_modules(
+    config: Stage2Config,
+) -> tuple[TextVAE, TextVAEEncoder, BlockCausalTextDiT]:
+    torch.manual_seed(0)
+    vae = TextVAE(config.vae)
+    reference_encoder = create_frozen_reference_encoder(vae)
+    dit = BlockCausalTextDiT(config.dit)
+    return vae, reference_encoder, dit
+
+
+def _make_stage2_token_ids(config: Stage2Config) -> torch.Tensor:
+    generator = torch.Generator().manual_seed(17)
+    return torch.randint(
+        0,
+        config.vae.vocab_size,
+        (2, config.vae.sequence_length),
+        generator=generator,
+    )
+
+
+def _has_nonzero_grad(parameters) -> bool:
+    return any(
+        parameter.grad is not None and torch.count_nonzero(parameter.grad).item() > 0
+        for parameter in parameters
+    )

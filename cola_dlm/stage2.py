@@ -9,8 +9,15 @@ from numbers import Real
 import torch
 import torch.nn.functional as F
 
-from cola_dlm.config import Stage2Config
+from cola_dlm.block_causal_mask import build_packed_dit_inputs
+from cola_dlm.config import DiffusionConfig, Stage2Config
 from cola_dlm.dit import BlockCausalTextDiT
+from cola_dlm.flow_matching import (
+    flow_matching_loss as compute_flow_matching_loss,
+    flow_matching_target,
+    linear_bridge,
+    sample_timestep,
+)
 from cola_dlm.vae import (
     DiagonalGaussianPosterior,
     TextVAE,
@@ -182,6 +189,146 @@ def compute_stage2_vae_loss(
     )
 
 
+def compute_stage2_loss(
+    vae: TextVAE,
+    reference_encoder: TextVAEEncoder,
+    dit: BlockCausalTextDiT,
+    token_ids: torch.Tensor,
+    *,
+    attention_mask: torch.Tensor | None = None,
+    mask_labels: torch.Tensor | None = None,
+    stage2_config: Stage2Config | None = None,
+    lambda_vae: float | None = None,
+    lambda_flow_matching: float | None = None,
+    lambda_reference_kl: float | None = None,
+    lambda_posterior_regularizer: float | None = None,
+    lambda_mask: float | None = None,
+    generator: torch.Generator | None = None,
+    deterministic_vae: bool = False,
+    mask_ignore_index: int = _DEFAULT_MASK_IGNORE_INDEX,
+) -> Stage2Loss:
+    """Compute the joint Stage 2 VAE, reference-KL, and DiT prior objective."""
+
+    if stage2_config is not None:
+        _validate_stage2_component_shapes(
+            vae=vae,
+            reference_encoder=reference_encoder,
+            dit=dit,
+            stage2_config=stage2_config,
+        )
+    else:
+        _require_instance("vae", vae, TextVAE)
+        _require_instance("reference_encoder", reference_encoder, TextVAEEncoder)
+        _require_instance("dit", dit, BlockCausalTextDiT)
+
+    (
+        lambda_vae,
+        lambda_flow_matching,
+        lambda_reference_kl,
+        lambda_posterior_regularizer,
+        lambda_mask,
+    ) = _resolve_stage2_weights(
+        stage2_config=stage2_config,
+        lambda_vae=lambda_vae,
+        lambda_flow_matching=lambda_flow_matching,
+        lambda_reference_kl=lambda_reference_kl,
+        lambda_posterior_regularizer=lambda_posterior_regularizer,
+        lambda_mask=lambda_mask,
+    )
+    if attention_mask is not None:
+        _validate_attention_mask(attention_mask, token_ids, require_any=True)
+
+    model_attention_mask = _token_attention_to_transformer_mask(attention_mask)
+    output = vae(
+        token_ids,
+        attention_mask=model_attention_mask,
+        deterministic=deterministic_vae,
+        generator=generator,
+    )
+    with torch.no_grad():
+        reference_posterior = reference_encoder(
+            token_ids,
+            attention_mask=model_attention_mask,
+        )
+
+    vae_side_loss = compute_stage2_vae_loss(
+        output,
+        token_ids,
+        reference_posterior,
+        attention_mask=attention_mask,
+        mask_labels=mask_labels,
+        lambda_vae=lambda_vae,
+        lambda_flow_matching=lambda_flow_matching,
+        lambda_reference_kl=lambda_reference_kl,
+        lambda_posterior_regularizer=lambda_posterior_regularizer,
+        lambda_mask=lambda_mask,
+        mask_ignore_index=mask_ignore_index,
+    )
+
+    z0 = output.latents
+    z1 = torch.randn(
+        z0.shape,
+        generator=generator,
+        device=z0.device,
+        dtype=z0.dtype,
+    )
+    diffusion_config = (
+        stage2_config.diffusion if stage2_config is not None else DiffusionConfig()
+    )
+    timestep = sample_timestep(
+        diffusion_config,
+        batch_size=z0.shape[0],
+        device=z0.device,
+        dtype=z0.dtype,
+        generator=generator,
+    )
+    zt = linear_bridge(z0, z1, timestep)
+    target = flow_matching_target(z0, z1, diffusion_config.prediction_type)
+
+    block_size = (
+        stage2_config.dit.block_size
+        if stage2_config is not None
+        else dit.config.block_size
+    )
+    packed = build_packed_dit_inputs(
+        z0,
+        zt,
+        block_size=block_size,
+        detach_clean_context=True,
+    )
+    packed_target = _pack_flow_matching_target(
+        z0,
+        target,
+        block_size=block_size,
+    )
+    prediction = dit(
+        packed.latents,
+        timestep,
+        packed.attention_mask,
+        packed.segment_ids,
+    )
+    flow_loss = compute_flow_matching_loss(
+        prediction,
+        packed_target,
+        packed.loss_mask,
+    )
+    loss = (
+        lambda_vae * vae_side_loss.vae_loss
+        + lambda_flow_matching * flow_loss
+        + lambda_reference_kl * vae_side_loss.reference_kl
+    )
+    return Stage2Loss(
+        loss=loss,
+        vae_loss=vae_side_loss.vae_loss,
+        flow_matching_loss=flow_loss,
+        reference_kl=vae_side_loss.reference_kl,
+        reconstruction_nll=vae_side_loss.reconstruction_nll,
+        posterior_regularizer=vae_side_loss.posterior_regularizer,
+        mask_loss=vae_side_loss.mask_loss,
+        logsnr=vae_side_loss.logsnr,
+    )
+
+
 def _validate_stage2_component_shapes(
     *,
     vae: TextVAE,
@@ -340,6 +487,28 @@ def _masked_mean(
 
 def _zero_scalar_like(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.new_zeros(())
+
+
+def _token_attention_to_transformer_mask(
+    attention_mask: torch.Tensor | None,
+) -> torch.Tensor | None:
+    if attention_mask is None:
+        return None
+    return attention_mask[:, None, :].expand(
+        attention_mask.shape[0],
+        attention_mask.shape[1],
+        attention_mask.shape[1],
+    )
+
+
+def _pack_flow_matching_target(
+    clean_context: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    block_size: int,
+) -> torch.Tensor:
+    clean_length = target.shape[1] - block_size
+    return torch.cat((clean_context[:, :clean_length].detach(), target), dim=1)
 
 
 def _resolve_stage2_weights(
@@ -506,4 +675,5 @@ __all__ = (
     "create_frozen_reference_encoder",
     "reference_kl",
     "compute_stage2_vae_loss",
+    "compute_stage2_loss",
 )
