@@ -11,6 +11,9 @@ dependencies = [
     "torch>=2.0",
 ]
 
+[project.scripts]
+train_vae_stage1 = "cola_dlm.train_vae_stage1:main"
+
 [project.optional-dependencies]
 tokenizer = [
     "transformers>=4.40",
