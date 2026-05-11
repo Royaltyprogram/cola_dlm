@@ -8,7 +8,7 @@ from numbers import Real
 import torch
 import torch.nn.functional as F
 
-from cola_dlm.vae import TextVAEOutput, vae_logsnr
+from cola_dlm.vae import TextVAE, TextVAEOutput, vae_logsnr
 
 
 _DEFAULT_MASK_IGNORE_INDEX = -100
@@ -118,6 +118,66 @@ def compute_stage1_vae_loss(
         mask_loss=mask_loss,
         logsnr=logsnr,
     )
+
+
+def stage1_pretraining_step(
+    model: TextVAE,
+    optimizer: torch.optim.Optimizer,
+    token_ids: torch.Tensor,
+    *,
+    attention_mask: torch.Tensor | None = None,
+    masking_policy: Stage1MaskingPolicy | None = None,
+    lambda_kl: float = 1.0,
+    lambda_mask: float = 0.0,
+    max_grad_norm: float | None = None,
+    deterministic: bool = False,
+    generator: torch.Generator | None = None,
+) -> Stage1VAELoss:
+    """Run one optimizer step for a tiny Stage 1 TextVAE pretraining batch."""
+
+    _validate_non_negative_weight("lambda_kl", lambda_kl)
+    _validate_non_negative_weight("lambda_mask", lambda_mask)
+    if max_grad_norm is not None:
+        _validate_non_negative_weight("max_grad_norm", max_grad_norm)
+
+    decoder_token_ids = None
+    mask_labels = None
+    mask_positions = None
+    mask_ignore_index = _DEFAULT_MASK_IGNORE_INDEX
+    if masking_policy is not None and lambda_mask != 0.0:
+        decoder_token_ids, mask_labels, mask_positions = apply_stage1_masking(
+            token_ids,
+            masking_policy,
+            attention_mask=attention_mask,
+            generator=generator,
+        )
+        mask_ignore_index = masking_policy.ignore_index
+
+    model.train()
+    output = model(
+        token_ids,
+        attention_mask=attention_mask,
+        deterministic=deterministic,
+        generator=generator,
+        decoder_token_ids=decoder_token_ids,
+        mask_loss_positions=mask_positions,
+    )
+    loss = compute_stage1_vae_loss(
+        output,
+        token_ids,
+        attention_mask=attention_mask,
+        mask_labels=mask_labels,
+        lambda_kl=lambda_kl,
+        lambda_mask=lambda_mask,
+        mask_ignore_index=mask_ignore_index,
+    )
+
+    optimizer.zero_grad(set_to_none=True)
+    loss.loss.backward()
+    if max_grad_norm is not None:
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+    optimizer.step()
+    return loss
 
 
 def _per_token_cross_entropy(
@@ -243,4 +303,5 @@ __all__ = (
     "Stage1MaskingPolicy",
     "apply_stage1_masking",
     "compute_stage1_vae_loss",
+    "stage1_pretraining_step",
 )

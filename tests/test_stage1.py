@@ -9,8 +9,14 @@ from cola_dlm.stage1 import (
     Stage1VAELoss,
     apply_stage1_masking,
     compute_stage1_vae_loss,
+    stage1_pretraining_step,
 )
-from cola_dlm.vae import DiagonalGaussianPosterior, TextVAEOutput, vae_logsnr
+from cola_dlm.vae import (
+    DiagonalGaussianPosterior,
+    TextVAE,
+    TextVAEOutput,
+    vae_logsnr,
+)
 
 
 def test_stage1_public_exports_are_loss_helpers():
@@ -21,6 +27,7 @@ def test_stage1_public_exports_are_loss_helpers():
         "Stage1MaskingPolicy",
         "apply_stage1_masking",
         "compute_stage1_vae_loss",
+        "stage1_pretraining_step",
     )
 
 
@@ -241,6 +248,66 @@ def test_stage1_masking_validates_policy_and_token_ids():
             torch.tensor([[1, -2]]),
             Stage1MaskingPolicy(mask_token_id=99, mask_probability=0.5),
         )
+
+
+def test_stage1_pretraining_step_updates_parameter_and_returns_finite_loss(
+    tiny_vae_config,
+):
+    torch.manual_seed(0)
+    model = TextVAE(config=tiny_vae_config)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-3)
+    token_ids = torch.arange(12, dtype=torch.long).reshape(2, 6)
+    policy = Stage1MaskingPolicy(
+        mask_token_id=tiny_vae_config.vocab_size - 1,
+        mask_probability=1.0,
+    )
+    parameters = [param for param in model.parameters() if param.requires_grad]
+    before_step = [param.detach().clone() for param in parameters]
+
+    loss = stage1_pretraining_step(
+        model,
+        optimizer,
+        token_ids,
+        masking_policy=policy,
+        lambda_kl=0.1,
+        lambda_mask=0.2,
+        generator=torch.Generator().manual_seed(1),
+        max_grad_norm=1.0,
+    )
+
+    for value in (
+        loss.loss,
+        loss.reconstruction_nll,
+        loss.kl,
+        loss.mask_loss,
+        loss.logsnr,
+    ):
+        assert value.shape == ()
+        assert torch.isfinite(value)
+    assert any(
+        not torch.allclose(before, after.detach())
+        for before, after in zip(before_step, parameters)
+    )
+
+
+def test_stage1_pretraining_step_skips_masking_when_lambda_mask_is_zero(
+    tiny_vae_config,
+):
+    torch.manual_seed(0)
+    model = TextVAE(config=tiny_vae_config)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-3)
+    token_ids = torch.arange(12, dtype=torch.long).reshape(2, 6)
+
+    loss = stage1_pretraining_step(
+        model,
+        optimizer,
+        token_ids,
+        lambda_kl=0.0,
+        lambda_mask=0.0,
+        generator=torch.Generator().manual_seed(1),
+    )
+
+    assert torch.allclose(loss.mask_loss, loss.mask_loss.new_zeros(()))
 
 
 def _make_output(
