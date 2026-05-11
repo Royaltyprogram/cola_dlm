@@ -154,6 +154,93 @@ class RotaryEmbedding(nn.Module):
                 raise ValueError("position_ids length must match query sequence length")
 
 
+class MultiHeadAttention(nn.Module):
+    """Multi-head self-attention preserving [batch, seq, hidden] shape."""
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        head_dim: int | None = None,
+        dropout: float = 0.0,
+        use_rope: bool = False,
+    ) -> None:
+        super().__init__()
+        if num_heads <= 0:
+            raise ValueError("num_heads must be positive")
+
+        if head_dim is None:
+            if hidden_size % num_heads != 0:
+                raise ValueError("hidden_size must be divisible by num_heads")
+            head_dim = hidden_size // num_heads
+        if head_dim <= 0:
+            raise ValueError("head_dim must be positive")
+        if hidden_size != num_heads * head_dim:
+            raise ValueError("hidden_size must equal num_heads * head_dim")
+        if use_rope and head_dim % 2 != 0:
+            raise ValueError("head_dim must be even when use_rope=True")
+
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.query_projection = nn.Linear(hidden_size, hidden_size)
+        self.key_projection = nn.Linear(hidden_size, hidden_size)
+        self.value_projection = nn.Linear(hidden_size, hidden_size)
+        self.output_projection = nn.Linear(hidden_size, hidden_size)
+        self.dropout = nn.Dropout(dropout)
+        self.rotary = RotaryEmbedding() if use_rope else None
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        causal: bool = False,
+    ) -> torch.Tensor:
+        if hidden_states.ndim != 3:
+            raise ValueError("hidden_states must be shaped [batch, seq, hidden]")
+
+        batch_size, seq_len, _ = hidden_states.shape
+        query = self._split_heads(self.query_projection(hidden_states))
+        key = self._split_heads(self.key_projection(hidden_states))
+        value = self._split_heads(self.value_projection(hidden_states))
+
+        if self.rotary is not None:
+            query, key = self.rotary(query, key)
+
+        scores = torch.matmul(query, key.transpose(-2, -1)) * (self.head_dim**-0.5)
+        if causal:
+            causal_mask = torch.ones(
+                seq_len,
+                seq_len,
+                dtype=torch.bool,
+                device=hidden_states.device,
+            ).tril()
+            scores = scores.masked_fill(~causal_mask, torch.finfo(scores.dtype).min)
+
+        normalized_mask = _normalize_attention_mask(
+            attention_mask=attention_mask,
+            batch_size=batch_size,
+            num_heads=self.num_heads,
+            seq_len=seq_len,
+            dtype=scores.dtype,
+            device=scores.device,
+        )
+        if normalized_mask is not None:
+            scores = scores + normalized_mask
+
+        attention_weights = torch.softmax(scores, dim=-1)
+        attention_weights = self.dropout(attention_weights)
+        attended = torch.matmul(attention_weights, value)
+        attended = attended.transpose(1, 2).contiguous()
+        attended = attended.view(batch_size, seq_len, self.hidden_size)
+        return self.output_projection(attended)
+
+    def _split_heads(self, tensor: torch.Tensor) -> torch.Tensor:
+        batch_size, seq_len, _ = tensor.shape
+        tensor = tensor.view(batch_size, seq_len, self.num_heads, self.head_dim)
+        return tensor.transpose(1, 2)
+
+
 def _build_activation(activation: str) -> nn.Module:
     if activation == "gelu":
         return nn.GELU()
@@ -189,10 +276,59 @@ def _apply_rotary(
     return rotated
 
 
+def _normalize_attention_mask(
+    attention_mask: torch.Tensor | None,
+    batch_size: int,
+    num_heads: int,
+    seq_len: int,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> torch.Tensor | None:
+    if attention_mask is None:
+        return None
+
+    is_boolean_mask = attention_mask.dtype == torch.bool
+    if not is_boolean_mask and not attention_mask.is_floating_point():
+        raise ValueError("attention_mask must be a bool or floating point tensor")
+
+    if attention_mask.ndim == 2:
+        if attention_mask.shape != (seq_len, seq_len):
+            raise ValueError("2D attention_mask must be shaped [seq, seq]")
+        mask = attention_mask.unsqueeze(0).unsqueeze(0)
+    elif attention_mask.ndim == 3:
+        if attention_mask.shape[-2:] != (seq_len, seq_len):
+            raise ValueError("3D attention_mask must be shaped [batch, seq, seq]")
+        if attention_mask.shape[0] not in (1, batch_size):
+            raise ValueError("attention_mask batch dimension must be 1 or batch size")
+        mask = attention_mask.unsqueeze(1)
+    elif attention_mask.ndim == 4:
+        if attention_mask.shape[-2:] != (seq_len, seq_len):
+            raise ValueError(
+                "4D attention_mask must be shaped [batch, heads, seq, seq]"
+            )
+        if attention_mask.shape[0] not in (1, batch_size):
+            raise ValueError("attention_mask batch dimension must be 1 or batch size")
+        if attention_mask.shape[1] not in (1, num_heads):
+            raise ValueError("attention_mask head dimension must be 1 or num_heads")
+        mask = attention_mask
+    else:
+        raise ValueError(
+            "attention_mask must be shaped [seq, seq], [batch, seq, seq], "
+            "or [batch, heads, seq, seq]"
+        )
+
+    mask = mask.to(device=device)
+    if is_boolean_mask:
+        additive_mask = torch.zeros(mask.shape, dtype=dtype, device=device)
+        return additive_mask.masked_fill(~mask, torch.finfo(dtype).min)
+    return mask.to(dtype=dtype)
+
+
 __all__ = (
     "TokenEmbedding",
     "OutputProjection",
     "RMSNorm",
     "FeedForward",
     "RotaryEmbedding",
+    "MultiHeadAttention",
 )

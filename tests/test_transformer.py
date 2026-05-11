@@ -3,6 +3,7 @@ import torch
 
 from cola_dlm.transformer import (
     FeedForward,
+    MultiHeadAttention,
     OutputProjection,
     RMSNorm,
     RotaryEmbedding,
@@ -19,6 +20,7 @@ def test_transformer_public_exports_are_core_helpers():
         "RMSNorm",
         "FeedForward",
         "RotaryEmbedding",
+        "MultiHeadAttention",
     )
 
 
@@ -104,3 +106,56 @@ def test_rotary_embedding_keeps_first_position_unchanged():
 
     assert torch.allclose(rotated_query[:, :, 0, :], query[:, :, 0, :])
     assert torch.allclose(rotated_key[:, :, 0, :], key[:, :, 0, :])
+
+
+def test_multi_head_attention_causal_mask_blocks_future_tokens():
+    torch.manual_seed(0)
+    attention = MultiHeadAttention(hidden_size=8, num_heads=2, dropout=0.0)
+    attention.eval()
+    hidden_states = torch.randn(1, 4, 8)
+    changed_future = hidden_states.clone()
+    changed_future[:, 2:, :] = torch.randn(1, 2, 8) * 10.0
+
+    output = attention(hidden_states, causal=True)
+    changed_output = attention(changed_future, causal=True)
+
+    assert torch.allclose(output[:, :2, :], changed_output[:, :2, :], atol=1.0e-6)
+
+
+def test_multi_head_attention_boolean_mask_marks_allowed_positions():
+    attention = MultiHeadAttention(hidden_size=2, num_heads=1, dropout=0.0)
+    attention.eval()
+    with torch.no_grad():
+        attention.query_projection.weight.zero_()
+        attention.query_projection.bias.zero_()
+        attention.key_projection.weight.zero_()
+        attention.key_projection.bias.zero_()
+        attention.value_projection.weight.copy_(torch.eye(2))
+        attention.value_projection.bias.zero_()
+        attention.output_projection.weight.copy_(torch.eye(2))
+        attention.output_projection.bias.zero_()
+
+    hidden_states = torch.tensor([[[1.0, 0.0], [0.0, 2.0], [3.0, 4.0]]])
+    attention_mask = torch.tensor(
+        [
+            [True, False, False],
+            [False, True, True],
+            [True, False, True],
+        ]
+    )
+
+    output = attention(hidden_states, attention_mask=attention_mask)
+
+    expected = torch.tensor([[[1.0, 0.0], [1.5, 3.0], [2.0, 2.0]]])
+    assert torch.allclose(output, expected)
+
+
+def test_multi_head_attention_accepts_additive_attention_masks():
+    attention = MultiHeadAttention(hidden_size=8, num_heads=2, dropout=0.0)
+    hidden_states = torch.randn(2, 4, 8)
+    attention_mask = torch.zeros(2, 2, 4, 4)
+    attention_mask[:, :, :, -1] = -100.0
+
+    output = attention(hidden_states, attention_mask=attention_mask)
+
+    assert output.shape == (2, 4, 8)
