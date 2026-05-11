@@ -366,6 +366,18 @@ def test_compute_stage2_loss_returns_finite_scalar_components(
         assert value.shape == (), name
         assert torch.isfinite(value), name
     assert loss.flow_matching_loss.item() >= 0.0
+    expected_block_ids = tuple(
+        range(
+            tiny_stage2_config.dit.sequence_length
+            // tiny_stage2_config.dit.block_size
+        )
+    )
+    assert tuple(loss.flow_matching_loss_by_block) == expected_block_ids
+    metrics = loss.as_dict()
+    for block_id in expected_block_ids:
+        key = f"flow_matching_loss_block_{block_id}"
+        assert key in metrics
+        assert torch.isfinite(metrics[key])
 
 
 def test_stage2_packed_clean_history_is_detached_but_noisy_targets_backpropagate(

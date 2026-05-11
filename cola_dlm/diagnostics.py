@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import torch
 
+from cola_dlm.block_causal_mask import NOISY_SEGMENT_ID
 from cola_dlm.vae import TextVAEOutput, vae_logsnr
 
 
@@ -64,6 +65,38 @@ def compute_vae_diagnostics(
         posterior_variance_mean=posterior_variance.mean().detach(),
         posterior_variance_std=posterior_variance.std(unbiased=False).detach(),
     )
+
+
+def compute_flow_matching_loss_by_block(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    loss_mask: torch.Tensor,
+    block_ids: torch.Tensor,
+    segment_ids: torch.Tensor,
+) -> dict[int, torch.Tensor]:
+    """Return detached Flow Matching MSE diagnostics grouped by noisy block id."""
+
+    _validate_flow_matching_block_inputs(
+        prediction,
+        target,
+        loss_mask,
+        block_ids,
+        segment_ids,
+    )
+
+    noisy_positions = segment_ids == NOISY_SEGMENT_ID
+    selected_positions = loss_mask & noisy_positions.unsqueeze(0)
+    if not selected_positions.any().item():
+        raise ValueError("loss_mask must select at least one noisy target position")
+
+    selected_block_ids = block_ids[selected_positions.any(dim=0)]
+    block_losses: dict[int, torch.Tensor] = {}
+    squared_error = (prediction.detach() - target.detach()).square()
+    for block_id in torch.sort(torch.unique(selected_block_ids)).values:
+        block_index = int(block_id.item())
+        block_mask = selected_positions & (block_ids == block_index).unsqueeze(0)
+        block_losses[block_index] = squared_error[block_mask].mean().detach()
+    return block_losses
 
 
 def _reconstruction_accuracy(
@@ -140,4 +173,73 @@ def _validate_diagnostic_inputs(
         raise ValueError("attention_mask must select at least one token")
 
 
-__all__ = ("VAEDiagnostics", "compute_vae_diagnostics")
+def _validate_flow_matching_block_inputs(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    loss_mask: torch.Tensor,
+    block_ids: torch.Tensor,
+    segment_ids: torch.Tensor,
+) -> None:
+    if not isinstance(prediction, torch.Tensor):
+        raise TypeError("prediction must be a torch.Tensor")
+    if not isinstance(target, torch.Tensor):
+        raise TypeError("target must be a torch.Tensor")
+    if prediction.shape != target.shape:
+        raise ValueError(
+            "prediction and target must have matching shapes, "
+            f"got {prediction.shape} and {target.shape}"
+        )
+    if prediction.ndim != 3:
+        raise ValueError(
+            "prediction and target must be shaped [batch, packed_len, latent]"
+        )
+    if not prediction.is_floating_point():
+        raise TypeError("prediction must be a floating point tensor")
+    if not target.is_floating_point():
+        raise TypeError("target must be a floating point tensor")
+    if prediction.device != target.device:
+        raise ValueError("prediction and target must be on the same device")
+
+    packed_shape = prediction.shape[:2]
+    if not isinstance(loss_mask, torch.Tensor):
+        raise TypeError("loss_mask must be a torch.Tensor")
+    if loss_mask.shape != packed_shape:
+        raise ValueError("loss_mask must be shaped [batch, packed_len]")
+    if loss_mask.dtype != torch.bool:
+        raise ValueError("loss_mask must be a boolean tensor")
+    if loss_mask.device != prediction.device:
+        raise ValueError("loss_mask and prediction must be on the same device")
+
+    packed_len = prediction.shape[1]
+    _validate_packed_index_tensor(block_ids, "block_ids", packed_len, prediction.device)
+    _validate_packed_index_tensor(
+        segment_ids,
+        "segment_ids",
+        packed_len,
+        prediction.device,
+    )
+    if torch.any(block_ids < 0).item():
+        raise ValueError("block_ids must be non-negative")
+
+
+def _validate_packed_index_tensor(
+    tensor: torch.Tensor,
+    name: str,
+    packed_len: int,
+    device: torch.device,
+) -> None:
+    if not isinstance(tensor, torch.Tensor):
+        raise TypeError(f"{name} must be a torch.Tensor")
+    if tensor.shape != (packed_len,):
+        raise ValueError(f"{name} must be shaped [packed_len]")
+    if tensor.dtype not in (torch.int8, torch.int16, torch.int32, torch.int64):
+        raise ValueError(f"{name} must be an integer tensor")
+    if tensor.device != device:
+        raise ValueError(f"{name} and prediction must be on the same device")
+
+
+__all__ = (
+    "VAEDiagnostics",
+    "compute_flow_matching_loss_by_block",
+    "compute_vae_diagnostics",
+)

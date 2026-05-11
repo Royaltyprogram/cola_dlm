@@ -4,14 +4,24 @@ import math
 import pytest
 import torch
 
-from cola_dlm.diagnostics import VAEDiagnostics, compute_vae_diagnostics
+from cola_dlm.block_causal_mask import CLEAN_SEGMENT_ID, NOISY_SEGMENT_ID
+from cola_dlm.diagnostics import (
+    VAEDiagnostics,
+    compute_flow_matching_loss_by_block,
+    compute_vae_diagnostics,
+)
+from cola_dlm.flow_matching import flow_matching_loss
 from cola_dlm.vae import DiagonalGaussianPosterior, TextVAEOutput, vae_logsnr
 
 
 def test_diagnostics_public_exports_are_small():
     import cola_dlm.diagnostics as diagnostics
 
-    assert diagnostics.__all__ == ("VAEDiagnostics", "compute_vae_diagnostics")
+    assert diagnostics.__all__ == (
+        "VAEDiagnostics",
+        "compute_flow_matching_loss_by_block",
+        "compute_vae_diagnostics",
+    )
 
 
 def test_reconstruction_accuracy_counts_top1_predictions():
@@ -139,6 +149,132 @@ def test_returned_diagnostics_are_scalar_detached_tensors():
         assert value.grad_fn is None, name
     with pytest.raises(FrozenInstanceError):
         diagnostics.logsnr = torch.tensor(0.0)
+
+
+def test_flow_matching_loss_by_block_groups_selected_noisy_positions():
+    prediction = torch.tensor(
+        [
+            [
+                [100.0, 100.0],
+                [200.0, 200.0],
+                [1.0, -1.0],
+                [1.0, -1.0],
+                [2.0, -2.0],
+                [2.0, -2.0],
+            ]
+        ]
+    )
+    target = torch.zeros_like(prediction)
+    loss_mask = torch.tensor([[False, False, True, True, True, True]])
+    block_ids = torch.tensor([0, 1, 0, 0, 1, 1])
+    segment_ids = torch.tensor(
+        [
+            CLEAN_SEGMENT_ID,
+            CLEAN_SEGMENT_ID,
+            NOISY_SEGMENT_ID,
+            NOISY_SEGMENT_ID,
+            NOISY_SEGMENT_ID,
+            NOISY_SEGMENT_ID,
+        ]
+    )
+
+    block_losses = compute_flow_matching_loss_by_block(
+        prediction,
+        target,
+        loss_mask,
+        block_ids,
+        segment_ids,
+    )
+
+    assert tuple(block_losses) == (0, 1)
+    torch.testing.assert_close(block_losses[0], torch.tensor(1.0))
+    torch.testing.assert_close(block_losses[1], torch.tensor(4.0))
+    for value in block_losses.values():
+        assert value.shape == torch.Size([])
+        assert not value.requires_grad
+
+
+def test_flow_matching_loss_by_block_ignores_clean_context_positions():
+    prediction = torch.tensor(
+        [[[100.0, 100.0], [1.0, 1.0], [3.0, 3.0]]],
+        requires_grad=True,
+    )
+    target = torch.zeros_like(prediction)
+    block_ids = torch.tensor([0, 0, 1])
+    segment_ids = torch.tensor(
+        [CLEAN_SEGMENT_ID, NOISY_SEGMENT_ID, NOISY_SEGMENT_ID]
+    )
+    loss_mask_with_clean_selected = torch.tensor([[True, True, True]])
+    loss_mask_without_clean_selected = torch.tensor([[False, True, True]])
+
+    with_clean = compute_flow_matching_loss_by_block(
+        prediction,
+        target,
+        loss_mask_with_clean_selected,
+        block_ids,
+        segment_ids,
+    )
+    without_clean = compute_flow_matching_loss_by_block(
+        prediction,
+        target,
+        loss_mask_without_clean_selected,
+        block_ids,
+        segment_ids,
+    )
+
+    assert tuple(with_clean) == (0, 1)
+    torch.testing.assert_close(with_clean[0], torch.tensor(1.0))
+    torch.testing.assert_close(with_clean[1], torch.tensor(9.0))
+    torch.testing.assert_close(with_clean[0], without_clean[0])
+    torch.testing.assert_close(with_clean[1], without_clean[1])
+
+
+def test_flow_matching_loss_by_block_preserves_scalar_average_definition():
+    prediction = torch.tensor(
+        [[[1.0, -1.0], [1.0, -1.0], [2.0, -2.0], [2.0, -2.0]]]
+    )
+    target = torch.zeros_like(prediction)
+    loss_mask = torch.ones(1, 4, dtype=torch.bool)
+    block_ids = torch.tensor([0, 0, 1, 1])
+    segment_ids = torch.full((4,), NOISY_SEGMENT_ID)
+
+    scalar_loss = flow_matching_loss(prediction, target, loss_mask)
+    block_losses = compute_flow_matching_loss_by_block(
+        prediction,
+        target,
+        loss_mask,
+        block_ids,
+        segment_ids,
+    )
+
+    torch.testing.assert_close(scalar_loss, torch.tensor(2.5))
+    torch.testing.assert_close(block_losses[0], torch.tensor(1.0))
+    torch.testing.assert_close(block_losses[1], torch.tensor(4.0))
+
+
+def test_flow_matching_loss_by_block_validates_mask_and_selected_noisy_positions():
+    prediction = torch.zeros(1, 2, 3)
+    target = torch.zeros_like(prediction)
+    block_ids = torch.tensor([0, 0])
+    segment_ids = torch.full((2,), NOISY_SEGMENT_ID)
+
+    with pytest.raises(ValueError, match="loss_mask must be a boolean tensor"):
+        compute_flow_matching_loss_by_block(
+            prediction,
+            target,
+            torch.ones(1, 2),
+            block_ids,
+            segment_ids,
+        )
+
+    with pytest.raises(ValueError, match="at least one noisy target position"):
+        compute_flow_matching_loss_by_block(
+            prediction,
+            target,
+            torch.zeros(1, 2, dtype=torch.bool),
+            block_ids,
+            segment_ids,
+        )
 
 
 def _make_output(

@@ -52,6 +52,7 @@ def test_stage2_cli_smoke_writes_named_checkpoint_and_jsonl(tmp_path):
         "loss",
         "vae_loss",
         "flow_matching_loss",
+        "flow_matching_loss_block_0",
         "reference_kl",
         "reconstruction_accuracy",
         "logsnr",

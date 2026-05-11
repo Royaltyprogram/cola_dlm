@@ -11,7 +11,11 @@ import torch.nn.functional as F
 
 from cola_dlm.block_causal_mask import build_packed_dit_inputs
 from cola_dlm.config import DiffusionConfig, Stage2Config
-from cola_dlm.diagnostics import VAEDiagnostics, compute_vae_diagnostics
+from cola_dlm.diagnostics import (
+    VAEDiagnostics,
+    compute_flow_matching_loss_by_block,
+    compute_vae_diagnostics,
+)
 from cola_dlm.dit import BlockCausalTextDiT
 from cola_dlm.flow_matching import (
     flow_matching_loss as compute_flow_matching_loss,
@@ -37,6 +41,7 @@ class Stage2Loss:
     loss: torch.Tensor
     vae_loss: torch.Tensor
     flow_matching_loss: torch.Tensor
+    flow_matching_loss_by_block: dict[int, torch.Tensor]
     reference_kl: torch.Tensor
     reconstruction_nll: torch.Tensor
     posterior_regularizer: torch.Tensor
@@ -56,12 +61,20 @@ class Stage2Loss:
             "loss": self.loss,
             "vae_loss": self.vae_loss,
             "flow_matching_loss": self.flow_matching_loss,
-            "reference_kl": self.reference_kl,
-            "reconstruction_nll": self.reconstruction_nll,
-            "posterior_regularizer": self.posterior_regularizer,
-            "mask_loss": self.mask_loss,
-            "logsnr": self.logsnr,
         }
+        for block_index in sorted(self.flow_matching_loss_by_block):
+            metrics[f"flow_matching_loss_block_{block_index}"] = (
+                self.flow_matching_loss_by_block[block_index]
+            )
+        metrics.update(
+            {
+                "reference_kl": self.reference_kl,
+                "reconstruction_nll": self.reconstruction_nll,
+                "posterior_regularizer": self.posterior_regularizer,
+                "mask_loss": self.mask_loss,
+                "logsnr": self.logsnr,
+            }
+        )
         metrics.update(self.diagnostics.as_dict())
         return metrics
 
@@ -189,6 +202,7 @@ def compute_stage2_vae_loss(
         loss=loss,
         vae_loss=vae_loss,
         flow_matching_loss=flow_matching_loss,
+        flow_matching_loss_by_block={},
         reference_kl=reference_kl_loss,
         reconstruction_nll=reconstruction_nll,
         posterior_regularizer=posterior_regularizer,
@@ -330,6 +344,13 @@ def compute_stage2_loss(
         packed_target,
         packed.loss_mask,
     )
+    flow_loss_by_block = compute_flow_matching_loss_by_block(
+        prediction,
+        packed_target,
+        packed.loss_mask,
+        packed.block_ids,
+        packed.segment_ids,
+    )
     loss = (
         lambda_vae * vae_side_loss.vae_loss
         + lambda_flow_matching * flow_loss
@@ -339,6 +360,7 @@ def compute_stage2_loss(
         loss=loss,
         vae_loss=vae_side_loss.vae_loss,
         flow_matching_loss=flow_loss,
+        flow_matching_loss_by_block=flow_loss_by_block,
         reference_kl=vae_side_loss.reference_kl,
         reconstruction_nll=vae_side_loss.reconstruction_nll,
         posterior_regularizer=vae_side_loss.posterior_regularizer,
