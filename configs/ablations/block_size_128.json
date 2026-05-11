@@ -1,0 +1,11 @@
+{
+  "extends": "../paper/stage2_paper_base.json",
+  "description": "Paper Stage 2 ablation with DiT block size 128.",
+  "ablation": "block_size",
+  "ablation_source_document": "docs/reproduction/cola_dlm/source_cache/project_page.html",
+  "config": {
+    "dit": {
+      "block_size": 128
+    }
+  }
+}

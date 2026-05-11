@@ -1,4 +1,5 @@
 import math
+from dataclasses import replace
 
 import pytest
 import torch
@@ -150,6 +151,25 @@ def test_text_vae_encoder_returns_per_token_posterior():
     expected_shape = (2, 5, 3)
     assert posterior.mu.shape == expected_shape
     assert posterior.logvar.shape == expected_shape
+
+
+def test_text_vae_encoder_fixed_logsnr_calibrates_batch_diagnostic(tiny_vae_config):
+    torch.manual_seed(0)
+    config = replace(tiny_vae_config, fixed_logsnr=1.5)
+    encoder = TextVAEEncoder(config=config)
+    with torch.no_grad():
+        encoder.posterior_projection.weight.zero_()
+        encoder.posterior_projection.bias[: config.latent_dim].fill_(1.0)
+        encoder.posterior_projection.bias[config.latent_dim :].zero_()
+    token_ids = torch.randint(0, config.vocab_size, (2, config.sequence_length))
+
+    posterior = encoder(token_ids)
+
+    assert torch.allclose(
+        vae_logsnr(posterior.mu, posterior.logvar),
+        torch.tensor(config.fixed_logsnr),
+        atol=1.0e-5,
+    )
 
 
 def test_text_vae_encoder_is_strictly_causal(tiny_vae_config):

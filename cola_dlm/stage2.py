@@ -628,6 +628,7 @@ def _resolve_stage2_weights(
     config_reference_kl = (
         None if stage2_config is None else stage2_config.reference_kl_weight
     )
+    config_mask = None if stage2_config is None else stage2_config.mask_loss_weight
     return (
         _resolve_stage2_weight("lambda_vae", lambda_vae, config_vae, default=1.0),
         _resolve_stage2_weight(
@@ -648,7 +649,7 @@ def _resolve_stage2_weights(
             None,
             default=1.0,
         ),
-        _resolve_stage2_weight("lambda_mask", lambda_mask, None, default=0.0),
+        _resolve_stage2_weight("lambda_mask", lambda_mask, config_mask, default=0.0),
     )
 
 

@@ -97,6 +97,7 @@ class TextVAEEncoder(nn.Module):
         dropout: float | None = None,
         activation: str | None = None,
         use_rope: bool | None = None,
+        fixed_logsnr: float | None = None,
     ) -> None:
         super().__init__()
         config = config or VAEConfig()
@@ -128,6 +129,9 @@ class TextVAEEncoder(nn.Module):
         self.activation = activation if activation is not None else config.activation
         self.use_rope = use_rope if use_rope is not None else config.use_rope
         self.attention_pattern = config.attention_pattern
+        self.fixed_logsnr = (
+            fixed_logsnr if fixed_logsnr is not None else config.fixed_logsnr
+        )
 
         _validate_text_vae_module_config(
             module_name="TextVAEEncoder",
@@ -144,6 +148,10 @@ class TextVAEEncoder(nn.Module):
             use_rope=self.use_rope,
             attention_pattern=self.attention_pattern,
         )
+        if self.fixed_logsnr is not None and self.fixed_logsnr < 0:
+            raise ValueError(
+                f"fixed_logsnr must be non-negative, got {self.fixed_logsnr!r}"
+            )
 
         self.token_embedding = TokenEmbedding(
             vocab_size=self.vocab_size,
@@ -178,6 +186,8 @@ class TextVAEEncoder(nn.Module):
             causal=True,
         )
         mu, logvar = self.posterior_projection(hidden_states).chunk(2, dim=-1)
+        if self.fixed_logsnr is not None:
+            logvar = _calibrated_logvar_for_logsnr(mu, self.fixed_logsnr)
         return DiagonalGaussianPosterior(mu=mu, logvar=logvar)
 
 
@@ -440,6 +450,19 @@ def _validate_decoder_inputs(
             f"latents final dimension must equal latent_dim={latent_dim}, "
             f"got {latents.shape[-1]}"
         )
+
+
+def _calibrated_logvar_for_logsnr(
+    mu: torch.Tensor,
+    fixed_logsnr: float,
+    eps: float = 1.0e-8,
+) -> torch.Tensor:
+    if eps <= 0:
+        raise ValueError(f"eps must be positive, got {eps!r}")
+
+    signal_power = mu.detach().pow(2).mean().clamp_min(eps)
+    log_noise_power = torch.log(signal_power) - fixed_logsnr
+    return torch.ones_like(mu) * log_noise_power
 
 
 def _validate_matching_floating_tensors(

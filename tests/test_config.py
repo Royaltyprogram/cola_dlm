@@ -23,6 +23,7 @@ def test_default_configs_use_paper_scale_values():
     assert vae.vocab_size == 100_278
     assert vae.sequence_length == 512
     assert vae.latent_dim == 16
+    assert vae.fixed_logsnr is None
     assert vae.patch_size == 1
     assert vae.encoder_layers == 4
     assert vae.decoder_layers == 4
@@ -73,6 +74,7 @@ def test_default_configs_use_paper_scale_values():
     assert stage2.vae_loss_weight is None
     assert stage2.flow_matching_loss_weight is None
     assert stage2.reference_kl_weight is None
+    assert stage2.mask_loss_weight is None
     assert inference.num_denoise_steps == 16
     assert inference.sampler == "euler"
     assert inference.cfg_scale == 7.0
@@ -149,6 +151,11 @@ def test_vae_config_requires_sequence_length_divisible_by_patch_size():
 def test_vae_config_requires_even_rope_head_dim():
     with pytest.raises(ValueError, match="attention_head_dim must be even"):
         VAEConfig(hidden_size=6, num_attention_heads=2, attention_head_dim=3)
+
+
+def test_vae_config_requires_non_negative_fixed_logsnr():
+    with pytest.raises(ValueError, match="fixed_logsnr must be non-negative"):
+        VAEConfig(fixed_logsnr=-0.1)
 
 
 def test_dit_config_requires_supported_positional_encoding():

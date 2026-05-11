@@ -38,6 +38,7 @@ class VAEConfig:
     vocab_size: int = 100_278
     sequence_length: int = 512
     latent_dim: int = 16
+    fixed_logsnr: float | None = None
     patch_size: int = 1
     encoder_layers: int = 4
     decoder_layers: int = 4
@@ -54,6 +55,7 @@ class VAEConfig:
         _require_positive("vocab_size", self.vocab_size)
         _require_positive("sequence_length", self.sequence_length)
         _require_positive("latent_dim", self.latent_dim)
+        _require_optional_non_negative("fixed_logsnr", self.fixed_logsnr)
         _require_positive("patch_size", self.patch_size)
         _require_positive("encoder_layers", self.encoder_layers)
         _require_positive("decoder_layers", self.decoder_layers)
@@ -213,6 +215,7 @@ class Stage2Config:
     vae_loss_weight: float | None = None
     flow_matching_loss_weight: float | None = None
     reference_kl_weight: float | None = None
+    mask_loss_weight: float | None = None
 
     def __post_init__(self) -> None:
         _require_positive("global_batch_size", self.global_batch_size)
@@ -224,6 +227,7 @@ class Stage2Config:
             self.flow_matching_loss_weight,
         )
         _require_optional_non_negative("reference_kl_weight", self.reference_kl_weight)
+        _require_optional_non_negative("mask_loss_weight", self.mask_loss_weight)
         _require_matching_latent_shape(self.vae, self.dit)
 
 

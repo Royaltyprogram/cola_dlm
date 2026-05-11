@@ -1,0 +1,11 @@
+{
+  "extends": "../paper/stage2_paper_base.json",
+  "description": "Paper Stage 2 ablation with fixed VAE logSNR 2.0.",
+  "ablation": "fixed_vae_logsnr",
+  "ablation_source_document": "docs/reproduction/cola_dlm/source_cache/project_page.html",
+  "config": {
+    "vae": {
+      "fixed_logsnr": 2.0
+    }
+  }
+}
