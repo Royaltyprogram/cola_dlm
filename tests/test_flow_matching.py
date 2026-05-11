@@ -1,0 +1,103 @@
+import pytest
+import torch
+
+from cola_dlm.config import DiffusionConfig
+from cola_dlm.flow_matching import sample_timestep
+
+
+def test_uniform_timestep_samples_have_requested_shape_and_open_range():
+    config = DiffusionConfig(timestep_schedule="uniform")
+
+    timesteps = sample_timestep(config, (2, 3), dtype=torch.float64)
+
+    assert timesteps.shape == (2, 3)
+    assert timesteps.dtype is torch.float64
+    assert torch.all(timesteps > 0)
+    assert torch.all(timesteps < 1)
+
+
+def test_logit_normal_timestep_uses_configured_loc_and_scale():
+    config = DiffusionConfig(
+        timestep_schedule="logit_normal",
+        logit_normal_loc=-0.5,
+        logit_normal_scale=0.25,
+    )
+    generator = torch.Generator().manual_seed(11)
+    expected_generator = torch.Generator().manual_seed(11)
+
+    timesteps = sample_timestep(config, 4, generator=generator)
+    expected = torch.sigmoid(
+        torch.randn(4, generator=expected_generator) * 0.25 - 0.5
+    )
+
+    torch.testing.assert_close(timesteps, expected)
+
+
+def test_logit_normal_timestep_defaults_missing_scale_to_one():
+    config = DiffusionConfig(
+        timestep_schedule="logit_normal",
+        logit_normal_loc=0.75,
+        logit_normal_scale=None,
+    )
+    generator = torch.Generator().manual_seed(29)
+    expected_generator = torch.Generator().manual_seed(29)
+
+    timesteps = sample_timestep(config, 3, generator=generator)
+    expected = torch.sigmoid(torch.randn(3, generator=expected_generator) + 0.75)
+
+    torch.testing.assert_close(timesteps, expected)
+
+
+def test_discrete_timestep_samples_belong_to_normalized_midpoint_grid():
+    config = DiffusionConfig(timestep_schedule="uniform")
+    generator = torch.Generator().manual_seed(37)
+
+    timesteps = sample_timestep(
+        config,
+        (4, 5),
+        dtype=torch.float64,
+        generator=generator,
+        num_discrete_timesteps=4,
+    )
+
+    grid = torch.tensor([0.125, 0.375, 0.625, 0.875], dtype=torch.float64)
+    belongs_to_grid = (timesteps[..., None] == grid).any(dim=-1)
+    assert torch.all(belongs_to_grid)
+
+
+def test_seeded_generators_make_timestep_sampling_deterministic():
+    config = DiffusionConfig(timestep_schedule="uniform")
+
+    first = sample_timestep(
+        config,
+        batch_size=6,
+        generator=torch.Generator().manual_seed(41),
+    )
+    second = sample_timestep(
+        config,
+        batch_size=6,
+        generator=torch.Generator().manual_seed(41),
+    )
+
+    torch.testing.assert_close(first, second)
+
+
+def test_sample_timestep_rejects_invalid_inputs():
+    config = DiffusionConfig(timestep_schedule="uniform")
+
+    with pytest.raises(TypeError, match="floating point"):
+        sample_timestep(config, 2, dtype=torch.long)
+
+    with pytest.raises(ValueError, match="num_discrete_timesteps must be positive"):
+        sample_timestep(config, 2, num_discrete_timesteps=0)
+
+    with pytest.raises(TypeError, match="num_discrete_timesteps"):
+        sample_timestep(config, 2, num_discrete_timesteps=2.5)
+
+    config.timestep_schedule = "unknown"
+    with pytest.raises(ValueError, match="timestep_schedule"):
+        sample_timestep(config, 2)
+
+    config = DiffusionConfig(timestep_schedule="logit_normal", logit_normal_scale=0.0)
+    with pytest.raises(ValueError, match="logit_normal_scale must be positive"):
+        sample_timestep(config, 2)
