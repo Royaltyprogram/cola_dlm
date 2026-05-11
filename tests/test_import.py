@@ -15,4 +15,12 @@ def test_package_import_is_lightweight():
 def test_config_boundary_imports():
     config = importlib.import_module("cola_dlm.config")
 
-    assert config.__all__ == ()
+    assert config.__all__ == (
+        "VAEConfig",
+        "DiTConfig",
+        "DiffusionConfig",
+        "OptimizerConfig",
+        "Stage1Config",
+        "Stage2Config",
+        "InferenceConfig",
+    )
