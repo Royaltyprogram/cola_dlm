@@ -1,4 +1,4 @@
-"""Utilities for the causal text VAE."""
+"""Utilities for the strictly causal text VAE."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def vae_logsnr(
 
 
 class TextVAEEncoder(nn.Module):
-    """Causal token encoder returning per-token posterior parameters."""
+    """Map token ids [batch, seq] to posterior tensors [batch, seq, latent]."""
 
     def __init__(
         self,
@@ -127,6 +127,7 @@ class TextVAEEncoder(nn.Module):
         self.dropout = dropout if dropout is not None else config.dropout
         self.activation = activation if activation is not None else config.activation
         self.use_rope = use_rope if use_rope is not None else config.use_rope
+        self.attention_pattern = config.attention_pattern
 
         _validate_text_vae_module_config(
             module_name="TextVAEEncoder",
@@ -141,6 +142,7 @@ class TextVAEEncoder(nn.Module):
             dropout=self.dropout,
             activation=self.activation,
             use_rope=self.use_rope,
+            attention_pattern=self.attention_pattern,
         )
 
         self.token_embedding = TokenEmbedding(
@@ -180,7 +182,7 @@ class TextVAEEncoder(nn.Module):
 
 
 class TextVAEDecoder(nn.Module):
-    """Causal decoder mapping token ids and per-token latents to logits."""
+    """Map [batch, seq] token ids and latents to [batch, seq, vocab] logits."""
 
     def __init__(
         self,
@@ -227,6 +229,7 @@ class TextVAEDecoder(nn.Module):
         self.dropout = dropout if dropout is not None else config.dropout
         self.activation = activation if activation is not None else config.activation
         self.use_rope = use_rope if use_rope is not None else config.use_rope
+        self.attention_pattern = config.attention_pattern
 
         _validate_text_vae_module_config(
             module_name="TextVAEDecoder",
@@ -241,6 +244,7 @@ class TextVAEDecoder(nn.Module):
             dropout=self.dropout,
             activation=self.activation,
             use_rope=self.use_rope,
+            attention_pattern=self.attention_pattern,
         )
 
         self.token_embedding = TokenEmbedding(
@@ -289,7 +293,7 @@ class TextVAEDecoder(nn.Module):
 
 @dataclass(frozen=True)
 class TextVAEOutput:
-    """Tiny VAE forward output with per-token latent tensors."""
+    """VAE output: logits [batch, seq, vocab], latents [batch, seq, latent]."""
 
     logits: torch.Tensor
     posterior: DiagonalGaussianPosterior
@@ -298,7 +302,7 @@ class TextVAEOutput:
 
 
 class TextVAE(nn.Module):
-    """Small causal text VAE wrapper used by acceptance tests and later training."""
+    """Strictly causal text VAE wrapper with per-token latent tensors."""
 
     def __init__(self, config: VAEConfig | None = None) -> None:
         super().__init__()
@@ -315,6 +319,8 @@ class TextVAE(nn.Module):
         generator: torch.Generator | None = None,
         mask_loss_positions: torch.Tensor | None = None,
     ) -> TextVAEOutput:
+        """Encode [batch, seq] tokens and decode logits [batch, seq, vocab]."""
+
         posterior = self.encoder(token_ids, attention_mask=attention_mask)
         latents = (
             posterior.mode()
@@ -343,6 +349,8 @@ class TextVAE(nn.Module):
         *,
         mask_loss_positions: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        """Return decoder token ids, preserving [batch, seq] shape."""
+
         if (
             mask_loss_positions is not None
             and mask_loss_positions.shape != token_ids.shape
@@ -365,6 +373,7 @@ def _validate_text_vae_module_config(
     dropout: float,
     activation: str,
     use_rope: bool,
+    attention_pattern: str,
 ) -> None:
     if vocab_size <= 0:
         raise ValueError(f"vocab_size must be positive, got {vocab_size!r}")
@@ -374,6 +383,11 @@ def _validate_text_vae_module_config(
         raise ValueError(f"patch_size must be positive, got {patch_size!r}")
     if patch_size != 1:
         raise NotImplementedError(f"{module_name} only supports patch_size=1")
+    if attention_pattern != "causal":
+        raise ValueError(
+            f"{module_name} requires attention_pattern='causal', "
+            f"got {attention_pattern!r}"
+        )
     if num_layers <= 0:
         raise ValueError(f"num_layers must be positive, got {num_layers!r}")
     if hidden_size <= 0:

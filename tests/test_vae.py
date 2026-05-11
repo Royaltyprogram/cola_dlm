@@ -3,6 +3,7 @@ import math
 import pytest
 import torch
 
+from cola_dlm.config import VAEConfig
 from cola_dlm.vae import (
     DiagonalGaussianPosterior,
     TextVAE,
@@ -170,6 +171,33 @@ def test_text_vae_encoder_is_strictly_causal(tiny_vae_config):
     )
 
 
+def test_text_vae_encoder_rejects_non_causal_attention_config(tiny_vae_config):
+    tiny_vae_config.attention_pattern = "full"
+
+    with pytest.raises(ValueError, match="TextVAEEncoder requires attention_pattern"):
+        TextVAEEncoder(config=tiny_vae_config)
+
+
+def test_text_vae_encoder_rejects_unsupported_patch_size():
+    config = VAEConfig(
+        tokenizer_name="tiny",
+        vocab_size=17,
+        sequence_length=6,
+        latent_dim=2,
+        patch_size=2,
+        encoder_layers=1,
+        decoder_layers=1,
+        hidden_size=8,
+        ffn_size=16,
+        num_attention_heads=2,
+        attention_head_dim=4,
+        use_rope=False,
+    )
+
+    with pytest.raises(NotImplementedError, match="TextVAEEncoder only supports"):
+        TextVAEEncoder(config=config)
+
+
 def test_text_vae_decoder_returns_token_logits(tiny_vae_config):
     torch.manual_seed(0)
     decoder = TextVAEDecoder(config=tiny_vae_config)
@@ -179,6 +207,53 @@ def test_text_vae_decoder_returns_token_logits(tiny_vae_config):
     logits = decoder(token_ids, latents)
 
     assert logits.shape == (2, 5, tiny_vae_config.vocab_size)
+
+
+def test_text_vae_decoder_is_strictly_causal_for_tokens_and_latents(tiny_vae_config):
+    torch.manual_seed(0)
+    decoder = TextVAEDecoder(config=tiny_vae_config)
+    decoder.eval()
+    token_ids = torch.tensor([[1, 2, 3, 4, 5, 6], [6, 5, 4, 3, 2, 1]])
+    latents = torch.randn(2, 6, tiny_vae_config.latent_dim)
+    changed_future_tokens = token_ids.clone()
+    changed_future_tokens[:, 3:] = torch.tensor([[9, 10, 11], [11, 10, 9]])
+    changed_future_latents = latents.clone()
+    changed_future_latents[:, 3:, :] = torch.randn_like(latents[:, 3:, :]) + 10.0
+
+    with torch.no_grad():
+        logits = decoder(token_ids, latents)
+        token_changed_logits = decoder(changed_future_tokens, latents)
+        latent_changed_logits = decoder(token_ids, changed_future_latents)
+
+    assert torch.allclose(logits[:, :3, :], token_changed_logits[:, :3, :])
+    assert torch.allclose(logits[:, :3, :], latent_changed_logits[:, :3, :])
+
+
+def test_text_vae_decoder_rejects_non_causal_attention_config(tiny_vae_config):
+    tiny_vae_config.attention_pattern = "full"
+
+    with pytest.raises(ValueError, match="TextVAEDecoder requires attention_pattern"):
+        TextVAEDecoder(config=tiny_vae_config)
+
+
+def test_text_vae_decoder_rejects_unsupported_patch_size():
+    config = VAEConfig(
+        tokenizer_name="tiny",
+        vocab_size=17,
+        sequence_length=6,
+        latent_dim=2,
+        patch_size=2,
+        encoder_layers=1,
+        decoder_layers=1,
+        hidden_size=8,
+        ffn_size=16,
+        num_attention_heads=2,
+        attention_head_dim=4,
+        use_rope=False,
+    )
+
+    with pytest.raises(NotImplementedError, match="TextVAEDecoder only supports"):
+        TextVAEDecoder(config=config)
 
 
 def test_text_vae_forward_returns_posterior_latents_kl_and_logits(tiny_vae_config):
@@ -204,3 +279,33 @@ def test_text_vae_deterministic_mode_uses_posterior_means(tiny_vae_config):
     output = model(token_ids, deterministic=True)
 
     assert torch.allclose(output.latents, output.posterior.mu)
+
+
+def test_text_vae_tiny_config_integration_with_patch_size_one():
+    torch.manual_seed(0)
+    config = VAEConfig(
+        tokenizer_name="tiny",
+        vocab_size=19,
+        sequence_length=4,
+        latent_dim=2,
+        patch_size=1,
+        encoder_layers=2,
+        decoder_layers=1,
+        hidden_size=8,
+        ffn_size=16,
+        num_attention_heads=2,
+        attention_head_dim=4,
+        use_rope=False,
+    )
+    model = TextVAE(config=config)
+    model.eval()
+    token_ids = torch.tensor([[1, 2, 3, 4]])
+
+    with torch.no_grad():
+        output = model(token_ids, deterministic=True)
+
+    assert output.logits.shape == (1, 4, config.vocab_size)
+    assert output.posterior.mu.shape == (1, 4, config.latent_dim)
+    assert output.posterior.logvar.shape == (1, 4, config.latent_dim)
+    assert output.latents.shape == (1, 4, config.latent_dim)
+    assert output.kl.shape == (1, 4)
