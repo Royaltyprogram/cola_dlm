@@ -10,8 +10,8 @@ Use the tiny-debug recipes for local smoke tests.
 | --- | --- | --- |
 | Tokenizer | OLMo 2 tokenizer; vocabulary size `100,278`. | [`00_context.md`, Reproduction Target](00_context.md#reproduction-target) |
 | Sequence length | `512` tokens. The VAE patch size is `1`, so the default latent length also stays `512`. | [`00_context.md`, Reproduction Target](00_context.md#reproduction-target) and [`Text VAE`](00_context.md#text-vae) |
-| Text VAE | Hidden size `1,536`; FFN size `6,144`; `4` encoder blocks; `4` decoder blocks; latent dimension `16`; strictly causal attention. | [`00_context.md`, Reproduction Target](00_context.md#reproduction-target) and [`Text VAE`](00_context.md#text-vae) |
-| DiT prior | Hidden size `2,048`; FFN size `8,192`; `24` layers; `16` heads; head dimension `128`; block size `16`; RoPE; block-causal attention. | [`00_context.md`, Reproduction Target](00_context.md#reproduction-target) and [`Block-Causal DiT Attention`](00_context.md#block-causal-dit-attention) |
+| Text VAE | About `500M` parameters; hidden size `1,536`; FFN size `6,144`; `4` encoder blocks; `4` decoder blocks; latent dimension `16`; strictly causal attention. | [`00_context.md`, Reproduction Target](00_context.md#reproduction-target) and [`Text VAE`](00_context.md#text-vae) |
+| DiT prior | About `1.8B` non-embedding parameters; hidden size `2,048`; FFN size `8,192`; `24` layers; `16` heads; head dimension `128`; block size `16`; RoPE; block-causal attention. | [`00_context.md`, Reproduction Target](00_context.md#reproduction-target) and [`Block-Causal DiT Attention`](00_context.md#block-causal-dit-attention) |
 | Flow matching | Velocity prediction with LogitNormal timestep sampling at `loc=1`; `scale` remains unresolved in the captured sources and is kept configurable. | [`00_context.md`, Flow Matching Prior](00_context.md#flow-matching-prior) and [`Noise Schedule`](00_context.md#noise-schedule) |
 | Optimizer | AdamW; peak LR `1.5e-4`; `5,000` linear warmup steps from `1e-6`; cosine decay to min LR `1e-5`; weight decay `0.01`; betas `(0.9, 0.95)`; grad clip `1.0`; bf16 autocast with sensitive ops in fp32. | [`00_context.md`, Reproduction Target](00_context.md#reproduction-target) |
 | Batch scale | Global batch size `1,408`; tokens per step `720,896`. | [`00_context.md`, Reproduction Target](00_context.md#reproduction-target) |
@@ -22,7 +22,10 @@ Stable entry points:
 - `configs/stage2_paper.json`
 
 The generated parameter-count report is in
-[`parameter_counts.md`](parameter_counts.md).
+[`parameter_counts.md`](parameter_counts.md). It is generated from the same
+stable entry points above and compares local counts against the paper-reported
+Text VAE value of about `500M` parameters and DiT value of about `1.8B`
+non-embedding parameters.
 
 ## Memory Notes
 
@@ -48,4 +51,3 @@ For local verification, use the tiny-debug recipes:
 - `configs/stage1_tiny_debug.json`
 - `configs/stage2_tiny_debug.json`
 - `configs/inference_tiny_debug.json`
-

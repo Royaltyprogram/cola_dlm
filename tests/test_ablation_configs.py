@@ -23,6 +23,24 @@ ABLATION_RECIPES = (
     "no_bert_loss.json",
 )
 
+EXPECTED_ABLATION_OVERRIDES = {
+    "latent_dim_64.json": {
+        "vae": {"latent_dim": 64},
+        "dit": {"latent_dim": 64},
+    },
+    "latent_dim_128.json": {
+        "vae": {"latent_dim": 128},
+        "dit": {"latent_dim": 128},
+    },
+    "block_size_1.json": {"dit": {"block_size": 1}},
+    "block_size_64.json": {"dit": {"block_size": 64}},
+    "block_size_128.json": {"dit": {"block_size": 128}},
+    "fixed_vae_logsnr_1_0.json": {"vae": {"fixed_logsnr": 1.0}},
+    "fixed_vae_logsnr_1_5.json": {"vae": {"fixed_logsnr": 1.5}},
+    "fixed_vae_logsnr_2_0.json": {"vae": {"fixed_logsnr": 2.0}},
+    "no_bert_loss.json": {"mask_loss_weight": 0.0},
+}
+
 
 def test_all_ablation_recipes_load_as_stage2_configs():
     for file_name in ABLATION_RECIPES:
@@ -40,6 +58,13 @@ def test_all_ablation_recipes_extend_stage2_paper_base():
         raw = json.loads((ABLATION_DIR / file_name).read_text(encoding="utf-8"))
 
         assert raw["extends"] == PAPER_BASE_EXTENDS
+
+
+def test_all_ablation_recipes_contain_only_narrow_overrides():
+    for file_name in ABLATION_RECIPES:
+        raw = json.loads((ABLATION_DIR / file_name).read_text(encoding="utf-8"))
+
+        assert raw["config"] == EXPECTED_ABLATION_OVERRIDES[file_name]
 
 
 def test_latent_dimension_ablation_recipes_keep_vae_and_dit_equal():

@@ -5,6 +5,8 @@ from torch import nn
 
 from cola_dlm.dit import BlockCausalTextDiT
 from cola_dlm.parameter_count import (
+    PAPER_DIT_NON_EMBEDDING_PARAMETERS,
+    PAPER_VAE_PARAMETERS,
     count_dit_components,
     count_embedding_parameters,
     count_non_embedding_backbone_parameters,
@@ -16,7 +18,10 @@ from cola_dlm.parameter_count import (
 from cola_dlm.vae import TextVAE
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
+PAPER_SCALE_DOC = REPO_ROOT / "docs/reproduction/cola_dlm/paper_scale_config.md"
+PARAMETER_REPORT = REPO_ROOT / "docs/reproduction/cola_dlm/parameter_counts.md"
 
 
 class TinyKnownParameterModel(nn.Module):
@@ -93,3 +98,19 @@ def test_paper_report_command_uses_meta_and_writes_markdown(tmp_path):
     assert "configs/stage2_paper.json" in text
     assert "VAE initialization device: `meta`" in text
     assert "DiT initialization device: `meta`" in text
+
+
+def test_paper_scale_docs_and_report_use_same_paths_and_paper_values():
+    report_text = PARAMETER_REPORT.read_text(encoding="utf-8").replace("`", "")
+    doc_text = PAPER_SCALE_DOC.read_text(encoding="utf-8").replace("`", "")
+
+    for stable_path in ("configs/stage1_paper.json", "configs/stage2_paper.json"):
+        assert stable_path in report_text
+        assert stable_path in doc_text
+
+    for paper_value in (
+        PAPER_VAE_PARAMETERS,
+        PAPER_DIT_NON_EMBEDDING_PARAMETERS,
+    ):
+        assert paper_value in report_text
+        assert paper_value in doc_text
