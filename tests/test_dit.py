@@ -4,7 +4,29 @@ import pytest
 import torch
 
 from cola_dlm.block_causal_mask import build_packed_dit_inputs
+from cola_dlm.config import DiTConfig
 from cola_dlm.dit import BlockCausalTextDiT, TimestepEmbedding
+
+
+def test_dit_public_surface_is_backbone_only():
+    import cola_dlm.dit as dit
+
+    assert dit.__all__ == ("TimestepEmbedding", "BlockCausalTextDiT")
+    assert dit.TimestepEmbedding is TimestepEmbedding
+    assert dit.BlockCausalTextDiT is BlockCausalTextDiT
+
+
+def test_paper_scale_dit_config_instantiates_without_model_forward():
+    config = DiTConfig()
+
+    assert config.sequence_length == 512
+    assert config.latent_dim == 16
+    assert config.block_size == 16
+    assert config.num_layers == 24
+    assert config.hidden_size == 2_048
+    assert config.ffn_size == 8_192
+    assert config.attention_pattern == "block_causal"
+    assert config.positional_encoding == "rope"
 
 
 def test_timestep_embedding_accepts_vector_and_column_timesteps():
@@ -190,6 +212,18 @@ def test_block_causal_text_dit_rejects_mismatched_latent_dim(tiny_dit_config):
         model(invalid_latents, timesteps, packed.attention_mask)
 
 
+def test_block_causal_text_dit_rejects_invalid_packed_latent_rank(
+    tiny_dit_config,
+):
+    model = BlockCausalTextDiT(tiny_dit_config)
+    invalid_latents = torch.randn(2, tiny_dit_config.latent_dim)
+    timesteps = torch.tensor([0.25, 0.75])
+    attention_mask = torch.ones(2, 2, dtype=torch.bool)
+
+    with pytest.raises(ValueError, match=r"packed_latents must be shaped"):
+        model(invalid_latents, timesteps, attention_mask)
+
+
 def test_block_causal_text_dit_rejects_mismatched_attention_mask_length(
     tiny_dit_config,
 ):
@@ -200,6 +234,26 @@ def test_block_causal_text_dit_rejects_mismatched_attention_mask_length(
     timesteps = torch.tensor([0.25, 0.75])
 
     with pytest.raises(ValueError, match="attention_mask.*packed_len"):
+        model(packed.latents, timesteps, invalid_attention_mask)
+
+
+def test_block_causal_text_dit_rejects_invalid_attention_mask_rank(
+    tiny_dit_config,
+):
+    model = BlockCausalTextDiT(tiny_dit_config)
+    z0, zt = _tiny_stage2_latents(tiny_dit_config)
+    packed = build_packed_dit_inputs(z0, zt, block_size=tiny_dit_config.block_size)
+    invalid_attention_mask = torch.ones(
+        1,
+        1,
+        1,
+        packed.latents.shape[1],
+        packed.latents.shape[1],
+        dtype=torch.bool,
+    )
+    timesteps = torch.tensor([0.25, 0.75])
+
+    with pytest.raises(ValueError, match="attention_mask must be shaped"):
         model(packed.latents, timesteps, invalid_attention_mask)
 
 

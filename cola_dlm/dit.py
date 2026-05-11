@@ -10,6 +10,8 @@ from torch import nn
 from cola_dlm.config import DiTConfig
 from cola_dlm.transformer import RMSNorm, TransformerBlock
 
+__all__ = ("TimestepEmbedding", "BlockCausalTextDiT")
+
 
 class TimestepEmbedding(nn.Module):
     """Embed normalized scalar timesteps into hidden-size conditioning vectors."""
