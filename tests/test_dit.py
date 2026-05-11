@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 import torch
 
@@ -55,6 +57,103 @@ def test_block_causal_text_dit_predicts_packed_latent_shape(tiny_dit_config):
     assert output.shape == packed.latents.shape
     assert output.dtype is torch.float64
     assert torch.isfinite(output).all()
+
+
+def test_block_causal_text_dit_accepts_packed_segment_ids(tiny_dit_config):
+    torch.manual_seed(0)
+    config = replace(tiny_dit_config, use_segment_embedding=True)
+    model = BlockCausalTextDiT(config)
+    model.eval()
+    z0, zt = _tiny_stage2_latents(config)
+    packed = build_packed_dit_inputs(z0, zt, block_size=config.block_size)
+    timesteps = torch.tensor([0.25, 0.75])
+
+    with torch.no_grad():
+        output = model(
+            packed.latents,
+            timesteps,
+            packed.attention_mask,
+            segment_ids=packed.segment_ids,
+        )
+
+    assert output.shape == packed.latents.shape
+    assert torch.isfinite(output).all()
+
+
+def test_block_causal_text_dit_loss_mask_selects_noisy_targets(tiny_dit_config):
+    torch.manual_seed(0)
+    model = BlockCausalTextDiT(tiny_dit_config)
+    model.eval()
+    z0, zt = _tiny_stage2_latents(tiny_dit_config)
+    packed = build_packed_dit_inputs(z0, zt, block_size=tiny_dit_config.block_size)
+    timesteps = torch.tensor([0.25, 0.75])
+
+    with torch.no_grad():
+        predictions = model(packed.latents, timesteps, packed.attention_mask)
+
+    masked_predictions = predictions[packed.loss_mask]
+    expected_noisy_targets = predictions[:, -tiny_dit_config.sequence_length :].reshape(
+        -1,
+        tiny_dit_config.latent_dim,
+    )
+
+    assert masked_predictions.shape == (
+        packed.latents.shape[0] * tiny_dit_config.sequence_length,
+        tiny_dit_config.latent_dim,
+    )
+    torch.testing.assert_close(masked_predictions, expected_noisy_targets)
+
+
+def test_block_causal_text_dit_allows_missing_segments_when_disabled(
+    tiny_dit_config,
+):
+    model = BlockCausalTextDiT(replace(tiny_dit_config, use_segment_embedding=False))
+    model.eval()
+    z0, zt = _tiny_stage2_latents(tiny_dit_config)
+    packed = build_packed_dit_inputs(z0, zt, block_size=tiny_dit_config.block_size)
+    timesteps = torch.tensor([0.25, 0.75])
+
+    with torch.no_grad():
+        output = model(
+            packed.latents,
+            timesteps,
+            packed.attention_mask,
+            segment_ids=None,
+        )
+
+    assert output.shape == packed.latents.shape
+
+
+def test_block_causal_text_dit_rejects_missing_segments_when_enabled(
+    tiny_dit_config,
+):
+    config = replace(tiny_dit_config, use_segment_embedding=True)
+    model = BlockCausalTextDiT(config)
+    z0, zt = _tiny_stage2_latents(config)
+    packed = build_packed_dit_inputs(z0, zt, block_size=config.block_size)
+    timesteps = torch.tensor([0.25, 0.75])
+
+    with pytest.raises(ValueError, match="segment_ids must be provided"):
+        model(packed.latents, timesteps, packed.attention_mask)
+
+
+def test_block_causal_text_dit_rejects_wrongly_shaped_segments(
+    tiny_dit_config,
+):
+    config = replace(tiny_dit_config, use_segment_embedding=True)
+    model = BlockCausalTextDiT(config)
+    z0, zt = _tiny_stage2_latents(config)
+    packed = build_packed_dit_inputs(z0, zt, block_size=config.block_size)
+    timesteps = torch.tensor([0.25, 0.75])
+    invalid_segment_ids = packed.segment_ids[:-1]
+
+    with pytest.raises(ValueError, match="segment_ids.*packed_len"):
+        model(
+            packed.latents,
+            timesteps,
+            packed.attention_mask,
+            segment_ids=invalid_segment_ids,
+        )
 
 
 def test_block_causal_text_dit_accepts_column_timesteps(tiny_dit_config):

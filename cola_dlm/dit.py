@@ -83,6 +83,11 @@ class BlockCausalTextDiT(nn.Module):
                 for _ in range(config.num_layers)
             ]
         )
+        self.segment_embedding = (
+            nn.Embedding(2, config.hidden_size)
+            if config.use_segment_embedding
+            else None
+        )
         self.output_norm = RMSNorm(config.hidden_size)
         self.output_projection = nn.Linear(config.hidden_size, config.latent_dim)
 
@@ -93,7 +98,13 @@ class BlockCausalTextDiT(nn.Module):
         attention_mask: torch.Tensor,
         segment_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        del segment_ids
+        """Predict packed latents shaped [batch, packed_len, latent_dim].
+
+        Timesteps must be [batch] or [batch, 1]. The attention mask uses the
+        PR 6 convention where True means a query may attend to a key.
+        Segment ids are optional [packed_len] or [batch, packed_len] clean/noisy
+        ids. Returns [batch, packed_len, latent_dim].
+        """
         self._validate_packed_latents(packed_latents)
         self._validate_attention_mask(attention_mask, packed_latents)
         if (
@@ -103,6 +114,7 @@ class BlockCausalTextDiT(nn.Module):
             raise ValueError("timesteps must be on the same device as packed_latents")
 
         hidden_states = self.input_projection(packed_latents)
+        hidden_states = self._add_segment_embeddings(hidden_states, segment_ids)
         time_embedding = self.timestep_embedding(timesteps)
         if time_embedding.shape[0] != packed_latents.shape[0]:
             raise ValueError(
@@ -173,3 +185,61 @@ class BlockCausalTextDiT(nn.Module):
                 "[batch, packed_len, packed_len], or "
                 "[batch, heads, packed_len, packed_len]"
             )
+
+    def _add_segment_embeddings(
+        self,
+        hidden_states: torch.Tensor,
+        segment_ids: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if self.segment_embedding is None:
+            return hidden_states
+
+        segment_embeddings = self._embed_segment_ids(segment_ids, hidden_states)
+        return hidden_states + segment_embeddings.to(dtype=hidden_states.dtype)
+
+    def _embed_segment_ids(
+        self,
+        segment_ids: torch.Tensor | None,
+        hidden_states: torch.Tensor,
+    ) -> torch.Tensor:
+        if segment_ids is None:
+            raise ValueError(
+                "segment_ids must be provided when use_segment_embedding=True"
+            )
+        if not isinstance(segment_ids, torch.Tensor):
+            raise TypeError("segment_ids must be a torch.Tensor")
+        if segment_ids.device != hidden_states.device:
+            raise ValueError("segment_ids must be on the same device as packed_latents")
+        if segment_ids.dtype not in (
+            torch.uint8,
+            torch.int8,
+            torch.int16,
+            torch.int32,
+            torch.int64,
+        ):
+            raise ValueError("segment_ids must be an integer tensor")
+
+        batch_size, packed_len = hidden_states.shape[:2]
+        if segment_ids.ndim == 1:
+            if segment_ids.shape[0] != packed_len:
+                raise ValueError(
+                    "1D segment_ids length must match packed_latents packed_len "
+                    f"(got {segment_ids.shape[0]}, expected {packed_len})"
+                )
+        elif segment_ids.ndim == 2:
+            expected = (batch_size, packed_len)
+            if segment_ids.shape != expected:
+                raise ValueError(
+                    "2D segment_ids must be shaped [batch, packed_len] "
+                    f"(got {tuple(segment_ids.shape)}, expected {expected})"
+                )
+        else:
+            raise ValueError(
+                "segment_ids must be shaped [packed_len] or [batch, packed_len]"
+            )
+
+        if torch.any((segment_ids < 0) | (segment_ids > 1)).item():
+            raise ValueError("segment_ids values must be 0 (clean) or 1 (noisy)")
+
+        assert self.segment_embedding is not None
+        return self.segment_embedding(segment_ids.to(dtype=torch.long))
