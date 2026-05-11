@@ -1,0 +1,1375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cola DLM — Continuous Latent Diffusion Language Model</title>
+
+  <meta name="description" content="Cola DLM: a hierarchical continuous latent diffusion language model that decomposes text generation into global semantic prior modeling and local textual realization.">
+  <meta property="og:title" content="Cola DLM — Continuous Latent Diffusion Language Model">
+  <meta property="og:description" content="Hierarchical latent diffusion for language modeling. Project page for the Cola DLM paper from ByteDance Seed.">
+  <meta property="og:image" content="static/images/pipeline.png">
+  <meta property="og:type" content="website">
+
+  <link rel="icon" type="image/png" href="static/images/cola_logo.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+
+  <!-- KaTeX for math rendering inside the original afterword block -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"
+          onload="renderMathInElement(document.body, {delimiters: [
+            {left: '\\[', right: '\\]', display: true},
+            {left: '\\(', right: '\\)', display: false}
+          ], throwOnError: false});"></script>
+
+  <link rel="stylesheet" href="static/css/index.css">
+</head>
+
+<body>
+
+<!-- ==== STICKY TOP NAV ==== -->
+<header class="topnav">
+  <div class="topnav-inner">
+    <a class="brand" href="#top">
+      <img src="static/images/cola_logo.png" alt="Cola">
+      <span><span class="accent">Cola</span> DLM</span>
+    </a>
+    <nav>
+      <a href="#abstract">Abstract</a>
+      <a href="#method">Method</a>
+      <a href="#findings">Findings</a>
+      <a href="#details">Experiments</a>
+      <a href="#discussion">Discussion</a>
+      <a href="#unified">Unified</a>
+      <a href="#reflections">Reflections</a>
+      <a href="#authors-note">Notes</a>
+      <a href="#bibtex" class="is-cta">BibTeX</a>
+    </nav>
+  </div>
+</header>
+
+<a id="top"></a>
+
+<!-- ==== HERO ==== -->
+<section class="hero">
+  <div class="hero-inner">
+    <h1 class="publication-title reveal">
+      <img src="static/images/cola_logo.png" alt="Cola" class="cola-logo">
+      <span class="accent">Co</span>ntinuous <span class="accent">La</span>tent
+      Diffusion Language Model
+    </h1>
+    <p class="tagline reveal reveal-delay-1">
+      Hierarchical latent prior modeling for text — a bridge to unified continuous-modality generation.
+    </p>
+
+    <div class="authors reveal reveal-delay-2">
+      <span class="author"><a href="https://hongcanguo.github.io/" target="_blank" rel="noopener">Hongcan Guo</a><sup>1,2</sup>,</span>
+      <span class="author">Qinyu Zhao<sup>3,†</sup>,</span>
+      <span class="author">Yian Zhao<sup>1,4</sup>,</span>
+      <span class="author">Shen Nie<sup>1,5</sup>,</span>
+      <span class="author">Rui Zhu<sup>1</sup>,</span>
+      <span class="author">Qiushan Guo<sup>1</sup>,</span>
+      <span class="author">Feng Wang<sup>1</sup>,</span>
+      <span class="author">Tao Yang<sup>1</sup>,</span>
+      <span class="author">Hengshuang Zhao<sup>2</sup>,</span>
+      <span class="author">Guoqiang Wei<sup>1</sup>,</span>
+      <span class="author">Yan Zeng<sup>1,✉</sup></span>
+    </div>
+
+    <div class="affil-list reveal reveal-delay-3">
+      <span class="affil-item"><span class="sup">1</span>ByteDance Seed</span>
+      <span class="affil-item"><span class="sup">2</span>The University of Hong Kong</span>
+      <span class="affil-item"><span class="sup">3</span>The Australian National University</span>
+      <span class="affil-item"><span class="sup">4</span>Peking University</span>
+      <span class="affil-item"><span class="sup">5</span>Renmin University of China</span>
+    </div>
+
+    <div class="notes reveal reveal-delay-3">
+      <span class="sup">†</span>Work done during an internship at ByteDance Seed&nbsp;·&nbsp;
+      <span class="sup">✉</span>Corresponding author
+    </div>
+
+    <div class="team-badge reveal reveal-delay-3">
+      <span class="star" aria-hidden="true">★</span>
+      <span>Seedance Team Research Project</span>
+      <span class="star" aria-hidden="true">★</span>
+    </div>
+
+    <div class="publication-links reveal reveal-delay-4">
+      <a class="btn" href="https://arxiv.org/pdf/2605.06548" target="_blank" rel="noopener">
+        <span class="icon"><i class="fas fa-file-pdf"></i></span>
+        <span>Paper</span>
+      </a>
+      <a class="btn" href="https://arxiv.org/abs/2605.06548" target="_blank" rel="noopener">
+        <span class="icon"><i class="ai ai-arxiv"></i></span>
+        <span>arXiv</span>
+      </a>
+      <a class="btn" href="https://huggingface.co/papers/2605.06548" target="_blank" rel="noopener">
+        <span class="icon">🤗</span>
+        <span>HF Paper</span>
+      </a>
+      <a class="btn" href="https://github.com/ByteDance-Seed/Cola-DLM" target="_blank" rel="noopener">
+        <span class="icon"><i class="fab fa-github"></i></span>
+        <span>Code</span>
+        <span class="coming-soon-badge">Soon</span>
+      </a>
+      <a class="btn" href="https://huggingface.co/ByteDance-Seed/Cola-DLM" target="_blank" rel="noopener">
+        <span class="icon">🤗</span>
+        <span>Model</span>
+        <span class="coming-soon-badge">Soon</span>
+      </a>
+      <a class="btn" href="#bibtex">
+        <span class="icon"><i class="fas fa-quote-left"></i></span>
+        <span>BibTeX</span>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ==== ABSTRACT ==== -->
+<section class="section" id="abstract">
+  <div class="container narrow">
+    <div class="section-heading reveal">
+      <span class="eyebrow">Abstract</span>
+      <h2>Hierarchical latent prior modeling for language</h2>
+    </div>
+
+    <div class="abstract-block reveal">
+      <p>
+        Large language models have achieved remarkable success under the autoregressive paradigm, yet
+        high-quality text generation need not be tied to a fixed left-to-right order. Existing
+        alternatives still struggle to jointly achieve generation efficiency, scalable representation
+        learning, and effective global semantic modeling.
+      </p>
+      <p>
+        We propose <b>Cola DLM</b>, a hierarchical latent diffusion language model that frames text
+        generation through hierarchical information decomposition. Cola DLM first learns a stable
+        text-to-latent mapping with a Text VAE, then models a global semantic prior in continuous latent
+        space with a block-causal DiT, and finally generates text through conditional decoding. From a
+        unified Markov-path perspective, its diffusion process performs <b>latent prior transport</b>
+        rather than token-level observation recovery, thereby separating global semantic organization
+        from local textual realization.
+      </p>
+      <p>
+        Through experiments spanning <b>4 research questions, 8 benchmarks, strictly matched ~2B
+        AR and LLaDA baselines</b>, and <b>scaling curves up to about 2000 EFLOPs</b>, we identify an
+        effective overall configuration of Cola DLM and verify its strong scaling behavior for text
+        generation. The results establish hierarchical continuous latent prior modeling as a principled
+        alternative to strictly token-level language modeling, while suggesting a concrete path toward
+        unified modeling across discrete text and continuous modalities.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ==== METHOD ==== -->
+<section class="section is-soft" id="method">
+  <div class="container">
+    <div class="section-heading reveal">
+      <span class="eyebrow">Method</span>
+      <h2>An overview of Cola DLM</h2>
+      <p class="lead">
+        Two training stages and one inference stage realize the joint
+        <span class="eq">p(x, z<sub>0</sub>) = p<sub>θ</sub>(x|z<sub>0</sub>)·p<sub>ψ</sub>(z<sub>0</sub>)</span>:
+        global semantics live in continuous latent space, local text is realized by the decoder.
+      </p>
+    </div>
+
+    <figure class="cola-figure reveal">
+      <img src="static/images/pipeline.png" alt="Overall workflow of Cola DLM: Text VAE pretraining, joint Text VAE + block-causal Text DiT training, and KV-cached inference." loading="lazy">
+      <figcaption>
+        <b>The overall workflow of Cola DLM.</b> <em>Training Stage 1</em>: Text VAE pretraining with reconstruction, BERT, and KL losses. <em>Training Stage 2</em>: joint Text VAE + Text DiT training with gradient control; the DiT uses a block-causal attention mechanism. <em>Inference Stage</em>: prefix encoding, block-wise prior transport in latent space, and conditional decoding with KV cache.
+      </figcaption>
+    </figure>
+
+    <div class="method-tldr">
+      <div class="stage reveal reveal-delay-1">
+        <span class="stage-tag">Stage 1</span>
+        <h4>Text VAE pretraining</h4>
+        <p>Strictly causal encoder/decoder learn a stable text↔latent mapping. Trained with reconstruction NLL, KL to a base prior, and a BERT-style mask loss to prevent decoder shortcutting.</p>
+      </div>
+      <div class="stage reveal reveal-delay-2">
+        <span class="stage-tag">Stage 2</span>
+        <h4>Block-causal DiT prior</h4>
+        <p>A block-causal DiT learns the latent prior <span class="eq">p<sub>ψ</sub>(z<sub>0</sub>)</span> via Flow Matching. The VAE keeps adapting under reconstruction, masking, and a reference KL regularizer to control latent drift.</p>
+      </div>
+      <div class="stage reveal reveal-delay-3">
+        <span class="stage-tag">Inference</span>
+        <h4>Prefix → blocks → text</h4>
+        <p>Encode the prefix to clean latents; transport noise blocks <span class="eq">ε<sup>(b)</sup>~N(0,I)</span> to clean latents under historical condition; conditional decoder produces the response. Block-causal KV-caching keeps inference efficient.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==== UNIFIED MARKOV-PATH VIEW ==== -->
+<section class="section" id="unified-view">
+  <div class="container">
+    <div class="section-heading reveal">
+      <span class="eyebrow">A unified perspective</span>
+      <h2>Where does Cola DLM differ from AR, LLaDA, and Plaid?</h2>
+      <p class="lead">
+        Under a unified Markov-path view, the essential question is the <b>state space</b> and the
+        <b>role</b> of the path: an observation path recovers text, a <b>prior path</b> only transports
+        a latent.
+      </p>
+    </div>
+
+    <div class="reveal" style="overflow-x: auto;">
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>State Space</th>
+            <th>Path Role</th>
+            <th>Generative Factorization</th>
+            <th>Where Continuity Appears</th>
+            <th>Explicit Latent</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="method-name">AR</td>
+            <td>Prefix tokens</td>
+            <td>Direct generation path</td>
+            <td><span class="eq">∏<sub>i</sub> p(x<sub>i</sub> | x<sub>&lt;i</sub>)</span></td>
+            <td>None</td>
+            <td><span class="cross">✗</span></td>
+          </tr>
+          <tr>
+            <td class="method-name">LLaDA</td>
+            <td>Discrete masked sequences</td>
+            <td>Discrete observation–recovery path</td>
+            <td><span class="eq">p(s<sub>T</sub>)·∏<sub>t</sub> p<sub>θ</sub>(s<sub>t-1</sub> | s<sub>t</sub>)</span></td>
+            <td>Discrete token space</td>
+            <td><span class="cross">✗</span></td>
+          </tr>
+          <tr>
+            <td class="method-name">Plaid</td>
+            <td>Continuous token-aligned representations</td>
+            <td>Continuous observation–recovery path</td>
+            <td><span class="eq">p(h<sub>T</sub>)·∏<sub>t</sub> p<sub>θ</sub>(h<sub>t-1</sub> | h<sub>t</sub>)</span></td>
+            <td>Continuous token space</td>
+            <td><span class="cross">✗</span></td>
+          </tr>
+          <tr class="cola-row">
+            <td class="method-name">Cola DLM</td>
+            <td>Compressed latent sequences</td>
+            <td><b>Prior-transport path</b></td>
+            <td><span class="eq">∫ p<sub>θ</sub>(x | z<sub>0</sub>)·p<sub>ψ</sub>(z<sub>0</sub>) dz<sub>0</sub></span></td>
+            <td>Latent space</td>
+            <td><span class="check">✓</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="muted center reveal" style="max-width: 820px; margin: 1.4rem auto 0; font-size: 0.95rem;">
+      The diffusion in Cola DLM learns a flexible <b>continuous prior</b>, not a left-to-right
+      inductive bias on text. The latent variable explicitly separates global semantic organization
+      from local token realization.
+    </p>
+  </div>
+</section>
+
+<!-- ==== KEY FINDINGS ==== -->
+<section class="section is-soft" id="findings">
+  <div class="container">
+    <div class="section-heading reveal">
+      <span class="eyebrow">Key findings</span>
+      <h2>Four research questions, one consistent story</h2>
+      <p class="lead">
+        Across 8 benchmarks, strictly matched ~2B AR and LLaDA baselines, and scaling curves up to
+        ~2000 EFLOPs, Cola DLM is competitive everywhere and shows the strongest late-stage gains.
+      </p>
+    </div>
+
+    <div class="finding-grid">
+      <div class="finding-card reveal reveal-delay-1">
+        <span class="rq-tag">RQ1 · Existence</span>
+        <h3>Global semantic structure exists in latent space</h3>
+        <p class="claim">The optimal timeshift drifts <em>systematically</em> with latent dimension, and the same drift appears across multiple semantic tasks — directly contradicting the separable-null hypothesis.</p>
+        <figure class="cola-figure">
+          <img src="static/images/rq1_global_semantic.svg" alt="Optimal timeshift drifts with latent dimension across multiple semantic metrics." loading="lazy">
+        </figure>
+        <ul class="observations">
+          <li>Best <span class="eq">loc</span> shifts from ~1.0 (d=16) → ~1.7 (d=64) → ~2.3 (d=128).</li>
+          <li>Same drift on LAMBADA, MMLU, SIQA, and Task Avg.</li>
+          <li>Empirical peaks match the theoretical predictions (dashed lines).</li>
+        </ul>
+      </div>
+
+      <div class="finding-card reveal reveal-delay-2">
+        <span class="rq-tag">RQ2 · Latent space</span>
+        <h3>Joint VAE–DiT evolution from a stable init wins</h3>
+        <p class="claim">Neither freezing the VAE nor training it from scratch is optimal. The latent space should evolve <em>continuously and strongly</em> with DiT — but starting from a meaningful pretrained init.</p>
+        <figure class="cola-figure">
+          <img src="static/images/rq2_fve_tasks_avg.svg" alt="Task-average scaling: Joint DiT x1 vs Fix VAE, All Scratch, Joint DiT x0.01, Interval." loading="lazy">
+        </figure>
+        <ul class="observations">
+          <li><b>Joint DiT x1</b> scales best across Task Avg, LAMBADA, MMLU, SIQA.</li>
+          <li><b>All Scratch</b> collapses the latent geometry; <b>Interval</b> & weak updates lag.</li>
+          <li>Adding a <b>BERT-style loss</b> further improves quality under active updates.</li>
+        </ul>
+      </div>
+
+      <div class="finding-card reveal reveal-delay-3">
+        <span class="rq-tag">RQ3 · Diffusion process</span>
+        <h3>Block size 16, loc=1 schedule, ~10–32 denoise steps</h3>
+        <p class="claim">Moderate block size and proper noise calibration matter most. Inference-time hyperparameters show clear sweet spots — ~10 denoising steps already recover most of the gain.</p>
+        <figure class="cola-figure">
+          <img src="static/images/rq3_ns_bar_40k.svg" alt="Noise schedule loc=1.0 achieves the best Task Average at 40k steps." loading="lazy">
+        </figure>
+        <ul class="observations">
+          <li>DiT block size <b>16</b> beats both fully causal (1) and large blocks (64, 128).</li>
+          <li>Logit-normal schedule with <b>loc=1.0</b> is best, especially for Joint DiT.</li>
+          <li>~8–10 denoising steps already match the saturated Task Avg; CFG ≈ 3–7 is best.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- ==== RQ4 · HEADLINE RESULT ==== -->
+    <div class="headline-result reveal">
+      <span class="headline-tag"><span class="star">★</span> RQ4 · Headline result</span>
+      <h3>Strongest late-stage scaling vs. AR and LLaDA across 8 benchmarks</h3>
+      <p class="claim">
+        Under a strictly matched ~2B-parameter setup and a unified <em>generative</em> evaluation
+        protocol — running scaling curves up to about <b>2000 EFLOPs</b> — Cola DLM reaches the best
+        final Task Average and shows the most encouraging headroom on reasoning-heavy benchmarks.
+      </p>
+
+      <figure class="cola-figure">
+        <img src="static/images/rq4_scaling.svg" alt="Scaling across 8 benchmarks plus Task Average — Cola DLM (red) vs AR (blue) and LLaDA (orange)." loading="lazy">
+      </figure>
+
+      <div class="obs-grid">
+        <div class="obs-item">
+          <span class="num">1</span><b>Best Task Average</b> at ~2000 EFLOPs, with the curve still rising.
+        </div>
+        <div class="obs-item">
+          <span class="num">2</span>Clear lead on reasoning-heavy <b>MMLU, RACE, Story Cloze, OBQA</b>.
+        </div>
+        <div class="obs-item">
+          <span class="num">3</span><b>SQuAD</b> eventually surpasses AR and approaches LLaDA's strong region.
+        </div>
+        <div class="obs-item">
+          <span class="num">4</span>Result is <b>conservative</b> — d=16, no extended training, room to scale further.
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ==== DETAILED EXPERIMENTS ==== -->
+<section class="section" id="details">
+  <div class="container">
+    <div class="section-heading reveal">
+      <span class="eyebrow">Detailed experiments</span>
+      <h2>More results across the four research questions</h2>
+      <p class="lead">Click any block below to expand its full set of curves and tables.</p>
+    </div>
+
+    <details class="detail-block reveal" open>
+      <summary>RQ2 · Fixed vs. evolving latent space — full benchmark grid</summary>
+      <div class="detail-body">
+        <div class="figure-grid cols-2">
+          <figure class="cola-figure">
+            <img src="static/images/rq2_fve_tasks_avg.svg" alt="Task Average: Joint DiT x1 scales best." loading="lazy">
+            <figcaption><b>Task Average.</b> Joint DiT x1 keeps improving while Fix VAE saturates.</figcaption>
+          </figure>
+          <figure class="cola-figure">
+            <img src="static/images/rq2_fve_lambada.svg" alt="LAMBADA: Joint DiT x1 dominates." loading="lazy">
+            <figcaption><b>LAMBADA.</b> Joint DiT x1 ends with the strongest score.</figcaption>
+          </figure>
+          <figure class="cola-figure">
+            <img src="static/images/rq2_fve_mmlu.svg" alt="MMLU: Joint DiT x1 wins late." loading="lazy">
+            <figcaption><b>MMLU.</b> All Scratch lags; Interval/x0.01 plateau early.</figcaption>
+          </figure>
+          <figure class="cola-figure">
+            <img src="static/images/rq2_fve_siqa.svg" alt="SIQA: Joint DiT x1 ahead." loading="lazy">
+            <figcaption><b>SIQA.</b> Same picture — joint co-adaptation is the right strategy.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </details>
+
+    <details class="detail-block reveal">
+      <summary>RQ2 · Latent-space visualization explains why</summary>
+      <div class="detail-body">
+        <div class="figure-grid cols-3">
+          <figure class="cola-figure">
+            <img src="static/images/rq2_vis_all_sc_16.png" alt="All Scratch d=16 collapses the latent." loading="lazy">
+            <figcaption><b>All Scratch, d=16.</b> Collapsed, dominated by simple outward drift.</figcaption>
+          </figure>
+          <figure class="cola-figure">
+            <img src="static/images/rq2_vis_all_sc_128.png" alt="All Scratch d=128 partially recovers." loading="lazy">
+            <figcaption><b>All Scratch, d=128.</b> Higher dim partially mitigates collapse but stays unstructured.</figcaption>
+          </figure>
+          <figure class="cola-figure">
+            <img src="static/images/rq2_vis_dit_sc_16.png" alt="Joint DiT d=16 with stable init produces structured trajectories." loading="lazy">
+            <figcaption><b>Joint DiT, d=16.</b> Heterogeneous, semantically organized trajectories.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </details>
+
+    <details class="detail-block reveal">
+      <summary>RQ2 · Latent dimensionality and VAE logSNR ablations</summary>
+      <div class="detail-body">
+
+        <p class="muted">Table 1 · <b>Latent dimensionality</b> at 117 EFLOPs (All Scratch, loc=1).</p>
+        <table class="data-table">
+          <thead>
+            <tr><th>Method</th><th>Lambada</th><th>MMLU</th><th>SIQA</th><th>Avg.</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="row-label">All Scratch, d=16, loc=1</td><td>14.3</td><td class="second">6.9</td><td>4.9</td><td>8.7</td></tr>
+            <tr><td class="row-label">All Scratch, d=64, loc=1</td><td class="best">20.9</td><td>5.4</td><td class="second">7.6</td><td class="second">11.3</td></tr>
+            <tr><td class="row-label">All Scratch, d=128, loc=1</td><td class="second">18.5</td><td class="best">8.1</td><td class="best">8.9</td><td class="best">11.8</td></tr>
+          </tbody>
+        </table>
+        <p class="tiny muted mt-1">Larger latent dimensions improve overall semantic capacity, with the strongest gains on MMLU and SIQA.</p>
+
+        <hr class="soft">
+
+        <p class="muted">Table 2 · <b>VAE logSNR</b> setting under two compute budgets.</p>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th rowspan="2">Method</th>
+              <th colspan="4">EFLOPs = 77.86</th>
+              <th colspan="4">EFLOPs = 116.78</th>
+            </tr>
+            <tr>
+              <th>Lambada</th><th>MMLU</th><th>SIQA</th><th>Avg.</th>
+              <th>Lambada</th><th>MMLU</th><th>SIQA</th><th>Avg.</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td class="row-label">Fixed VAE logSNR = 1.0</td><td>27.1</td><td>5.7</td><td>11.3</td><td>14.70</td><td>30.4</td><td>7.7</td><td>18.4</td><td>18.83</td></tr>
+            <tr><td class="row-label">Fixed VAE logSNR = 1.5</td><td>29.5</td><td class="second">7.8</td><td class="best">17.5</td><td class="second">18.27</td><td class="second">33.8</td><td>8.0</td><td class="best">23.6</td><td class="second">21.80</td></tr>
+            <tr><td class="row-label">Fixed VAE logSNR = 2.0</td><td class="second">30.9</td><td>5.1</td><td>14.3</td><td>16.77</td><td>32.7</td><td class="second">9.7</td><td>19.5</td><td>20.63</td></tr>
+            <tr><td class="row-label">Learnable VAE logSNR (≈ 4.5)</td><td class="best">32.6</td><td class="best">7.9</td><td class="second">16.2</td><td class="best">18.90</td><td class="best">34.6</td><td class="best">10.1</td><td class="second">21.6</td><td class="best">22.10</td></tr>
+          </tbody>
+        </table>
+        <p class="tiny muted mt-1">A <b>learnable</b> VAE logSNR is best overall; fixed logSNR = 1.5 is the strongest fixed alternative.</p>
+
+      </div>
+    </details>
+
+    <details class="detail-block reveal">
+      <summary>RQ2 · Semantic smoothness (BERT-loss) helps especially under active updates</summary>
+      <div class="detail-body">
+        <div class="figure-grid cols-2">
+          <figure class="cola-figure">
+            <img src="static/images/rq2_sem_tasks_avg.svg" alt="BERT loss helps Task Avg." loading="lazy">
+            <figcaption><b>Task Average.</b> BERT loss + lr=1 gives the strongest curve.</figcaption>
+          </figure>
+          <figure class="cola-figure">
+            <img src="static/images/rq2_sem_lambada.svg" alt="BERT loss on LAMBADA." loading="lazy">
+            <figcaption><b>LAMBADA.</b> Same trend — semantic guidance + active updates.</figcaption>
+          </figure>
+          <figure class="cola-figure">
+            <img src="static/images/rq2_sem_mmlu.svg" alt="BERT loss on MMLU." loading="lazy">
+            <figcaption><b>MMLU.</b> Strong latent evolution requires semantic guidance.</figcaption>
+          </figure>
+          <figure class="cola-figure">
+            <img src="static/images/rq2_sem_siqa.svg" alt="BERT loss on SIQA." loading="lazy">
+            <figcaption><b>SIQA.</b> Trainability alone is not enough.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </details>
+
+    <details class="detail-block reveal">
+      <summary>RQ3 · DiT block size — moderate (16) is best</summary>
+      <div class="detail-body">
+        <div class="figure-grid cols-2">
+          <figure class="cola-figure">
+            <img src="static/images/rq3_block_30k.svg" alt="DiT block size at 30k checkpoint." loading="lazy">
+            <figcaption><b>30k steps.</b> Block size 16 leads on Task Avg and most tasks.</figcaption>
+          </figure>
+          <figure class="cola-figure">
+            <img src="static/images/rq3_block_40k.svg" alt="DiT block size at 40k checkpoint." loading="lazy">
+            <figcaption><b>40k steps.</b> Same picture — too-large blocks hurt SIQA & MMLU.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </details>
+
+    <details class="detail-block reveal">
+      <summary>RQ3 · Noise schedule — loc = 1 is consistently best</summary>
+      <div class="detail-body">
+        <div class="figure-grid cols-2">
+          <figure class="cola-figure">
+            <img src="static/images/rq3_ns_tasks_avg.svg" alt="Noise schedule on Task Average." loading="lazy">
+            <figcaption><b>Task Average.</b> loc=1 + Joint DiT scales best across compute.</figcaption>
+          </figure>
+          <figure class="cola-figure">
+            <img src="static/images/rq3_ns_lambada.svg" alt="Noise schedule on LAMBADA." loading="lazy">
+            <figcaption><b>LAMBADA.</b> Mismatched schedules under-perform Fix VAE.</figcaption>
+          </figure>
+          <figure class="cola-figure">
+            <img src="static/images/rq3_ns_mmlu.svg" alt="Noise schedule on MMLU." loading="lazy">
+            <figcaption><b>MMLU.</b> Joint DiT only beats Fix VAE under proper calibration.</figcaption>
+          </figure>
+          <figure class="cola-figure">
+            <img src="static/images/rq3_ns_siqa.svg" alt="Noise schedule on SIQA." loading="lazy">
+            <figcaption><b>SIQA.</b> Noise calibration acts on the semantic-information axis.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </details>
+
+    <details class="detail-block reveal">
+      <summary>RQ3 · Inference — denoising steps & CFG</summary>
+      <div class="detail-body">
+        <div class="figure-grid cols-2">
+          <figure class="cola-figure">
+            <img src="static/images/rq3_inferstep.svg" alt="Task accuracy vs denoising steps — saturates around 16–32." loading="lazy">
+            <figcaption><b>Denoising steps.</b> ~8–10 steps already recover most of the gain. Block size 16 ⇒ idealized 1.6–2.0× shorter sequential depth than AR.</figcaption>
+          </figure>
+          <figure class="cola-figure">
+            <img src="static/images/rq3_cfg.svg" alt="Task accuracy vs CFG — moderate values are best." loading="lazy">
+            <figcaption><b>Classifier-Free Guidance.</b> Best around CFG ≈ 3–7; very large values clearly distort the denoising trajectory.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </details>
+
+  </div>
+</section>
+
+<!-- ==== DISCUSSION ==== -->
+<section class="section is-soft" id="discussion">
+  <div class="container">
+    <div class="section-heading reveal">
+      <span class="eyebrow">Discussion</span>
+      <h2>Beyond the core framework</h2>
+      <p class="lead">Four findings that shape how Cola DLM should be evaluated and extended.</p>
+    </div>
+
+    <div class="disc-card reveal">
+      <h3>Likelihood ≠ Generation Quality</h3>
+      <p>
+        Generation only requires the prior mass to reach decoder-valid regions, while
+        likelihood-oriented PPL <em>additionally</em> demands precise local probability calibration
+        around the gold posterior. The two metrics target different properties.
+      </p>
+      <figure class="cola-figure">
+        <img src="static/images/disc_likelihood.png" alt="Local latent geometry around ground-truth tokens vs prior-density landscapes." loading="lazy">
+        <figcaption>
+          Top: local latent geometry around representative ground-truth tokens. Bottom: corresponding prior-density landscapes. High decoder-probe success and posterior hit contrast with sharply varying prior hit and density alignment.
+        </figcaption>
+      </figure>
+      <div class="takeaway">
+        Generation quality reflects <b>semantic smoothness</b> of the latent space, while
+        likelihood-derived PPL is more sensitive to <b>probability-space smoothness</b> shaped by the
+        VAE logSNR — so we evaluate scaling under a unified <em>generative</em> protocol.
+      </div>
+    </div>
+
+    <div class="disc-card reveal">
+      <h3>First-block conditioning — clean repaint wins</h3>
+      <p>
+        The first generation block contains both known prompt latents and unknown latents to be
+        generated. Strong, persistent conditioning is much more effective than partial noisy
+        correction or positional layout alone.
+      </p>
+      <figure class="cola-figure">
+        <img src="static/images/disc_cond_strategies.svg" alt="Four conditioning/padding strategies for the first generation block." loading="lazy">
+        <figcaption>Clean repaint, partial repaint, and left/right padding strategies for the first-block mixed denoising problem.</figcaption>
+      </figure>
+      <div style="overflow-x:auto; margin-top:0.8rem;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th rowspan="2">Task</th>
+            <th colspan="3">Partial repaint (t=1)</th>
+            <th colspan="3">Partial repaint (t=3)</th>
+            <th rowspan="2">Clean cond.</th>
+            <th rowspan="2">Left pad.</th>
+            <th rowspan="2">Right pad.</th>
+          </tr>
+          <tr>
+            <th>m=1.0</th><th>m=0.7</th><th>m=0.3</th>
+            <th>m=1.0</th><th>m=0.7</th><th>m=0.3</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="row-label">Lambada</td><td>8.5</td><td>8.5</td><td>6.6</td><td>7.0</td><td>7.3</td><td>5.6</td><td class="best">37.1</td><td>24.6</td><td class="second">24.7</td></tr>
+          <tr><td class="row-label">MMLU</td><td>7.9</td><td>7.9</td><td>7.8</td><td>7.6</td><td>6.7</td><td>7.0</td><td class="best">11.9</td><td>8.4</td><td class="second">11.5</td></tr>
+          <tr><td class="row-label">SIQA</td><td>8.8</td><td>8.7</td><td>8.2</td><td>13.3</td><td>13.0</td><td>12.0</td><td class="best">24.8</td><td class="second">14.9</td><td>13.8</td></tr>
+          <tr><td class="row-label"><b>Avg.</b></td><td>8.4</td><td>8.4</td><td>7.5</td><td>9.3</td><td>9.0</td><td>8.2</td><td class="best">24.6</td><td>16.0</td><td class="second">16.7</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="takeaway">
+        <b>Clean condition repaint</b> dominates by a large margin. Repeated early corrections cannot
+        compensate for weak conditioning.
+      </div>
+    </div>
+
+    <!-- 3. Latent compression (paper §5.3) -->
+    <div class="disc-card reveal">
+      <h3>Latent compression — toward both better abstraction and faster generation</h3>
+      <p>
+        Should the Text VAE compress the sequence? We train two VAEs with the same latent dimension
+        (<span class="eq">d=128</span>), differing only in patch size: <b>p1</b> maps each token to
+        one latent, while <b>p2</b> compresses every two tokens into one latent. All other settings
+        match the headline run (DiT block size 16, logit-normal schedule with loc=1, 16 inference
+        steps, CFG = 7).
+      </p>
+      <p>
+        At first glance, p2 looks much weaker overall — but splitting samples by whether the prompt
+        length is divisible by the patch size tells a very different story. The gap is dominated
+        almost entirely by <em>Mod1</em> (odd-length prompts). On <em>Mod0</em>, where the latent
+        grouping aligns with the text sequence, <b>p2 actually surpasses p1 on average</b>.
+      </p>
+      <div style="overflow-x:auto; margin-top:0.4rem;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th rowspan="2">Sample Label</th>
+            <th colspan="2">Overall</th>
+            <th colspan="2">Prompt Len Mod0</th>
+            <th colspan="2">Prompt Len Mod1</th>
+          </tr>
+          <tr>
+            <th>p1</th><th>p2</th>
+            <th>p1</th><th>p2</th>
+            <th>p1</th><th>p2</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="row-label">Lambada</td><td class="best">31.10</td><td>17.40</td><td>32.11</td><td class="best">34.55</td><td class="best">30.12</td><td>0.79</td></tr>
+          <tr><td class="row-label">MMLU</td><td class="best">5.40</td><td>3.90</td><td>6.89</td><td class="best">7.68</td><td class="best">3.86</td><td>0.00</td></tr>
+          <tr><td class="row-label">SIQA</td><td class="best">11.10</td><td>6.10</td><td class="best">12.92</td><td>12.13</td><td class="best">9.26</td><td>0.00</td></tr>
+          <tr><td class="row-label"><b>Avg.</b></td><td class="best">15.87</td><td>9.13</td><td>17.31</td><td class="best">18.12</td><td class="best">14.41</td><td>0.26</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="muted mt-2" style="font-size:0.95rem;">
+        Patch size 2 fails on Mod1 not because compression itself is harmful, but because odd-length
+        prompts force the encoder to produce semantically shifted latents at the patch boundary —
+        and in Cola DLM that latent is the <em>clean condition</em> for subsequent block-wise prior
+        generation, so the bias propagates into denoising and decoding. Once boundary handling is
+        robust, the case is open for using larger patch sizes.
+      </p>
+      <div class="takeaway">
+        Under the same DiT block size, one denoising block covers
+        <span class="eq">patch_size × block_size</span> text tokens after decoding. With block size
+        16, p1 covers 16 tokens per block while p2 covers <b>32</b>. So once the boundary issue is
+        fixed, latent compression promises <b>both stronger semantic abstraction and faster
+        generation</b> — and the Mod0 result already shows that compressed latents do not have to
+        hurt quality. This is consistent with the core idea of Cola DLM: the latent is not a
+        token-aligned recovery code, but a lower-rate representation for global semantic
+        organization.
+      </div>
+    </div>
+
+    <!-- 4. VAE robustness (paper §5.4) -->
+    <div class="disc-card reveal">
+      <h3>VAE latent reconstruction is robust, not a fragile code</h3>
+      <p>
+        Cola DLM relies on the Text VAE's latent space being a <em>stable</em> intermediate
+        representation — semantic information should degrade gracefully under perturbation rather
+        than collapse abruptly. We measure reconstruction accuracy as a function of the diffusion
+        timestep (i.e., increasing perturbation strength).
+      </p>
+      <figure class="cola-figure">
+        <img src="static/images/disc_robust.svg" alt="VAE reconstruction stays near-perfect at t=0, ~0.96 at t=100, ~0.92 at t=250, then degrades more under heavier noise." loading="lazy">
+        <figcaption>
+          <b>Robustness of VAE latent reconstruction.</b> Near-perfect reconstruction at <span class="eq">t=0</span>; accuracy stays high (≈ 0.96) through the low-noise regime, remains around 0.92 at <span class="eq">t=250</span>, and degrades only under heavier noise.
+        </figcaption>
+      </figure>
+      <div class="takeaway">
+        The graceful-degradation pattern means that small or moderate latent perturbations do not
+        destroy semantic information abruptly. The Text VAE latent space is therefore <b>sufficiently
+        robust</b> to serve as the semantic interface for downstream prior modeling — exactly the
+        property hierarchical latent prior modeling requires.
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ==== UNIFIED TEXT-IMAGE ==== -->
+<section class="section" id="unified">
+  <div class="container">
+    <div class="section-heading reveal">
+      <span class="eyebrow">Beyond text</span>
+      <h2>Towards unified text–image modeling
+        <span class="preliminary-pill">preliminary</span>
+      </h2>
+      <p class="lead">
+        Modality-specific encoders/decoders share a common <b>block-causal MMDiT</b> prior over a
+        joint latent state. The same hierarchical decomposition extends naturally from text to vision.
+      </p>
+    </div>
+
+    <figure class="cola-figure reveal">
+      <img src="static/images/unified_overview.png" alt="Unified text-image: text-to-text, image-to-text, text-to-image, and the shared MMDiT prior schematic." loading="lazy">
+      <figcaption>
+        <b>Unified text–image qualitative samples.</b> Left: text-only continuation and image-conditioned text generation. Middle: text-to-image results (pretraining only). Right: schematic — modality-specific VAE encoders/decoders interface with a shared block-causal MMDiT that organizes the joint latent.
+      </figcaption>
+    </figure>
+
+    <h3 class="reveal" style="margin-top:2.6rem; text-align:center; font-size:1.15rem;">All text-to-image samples</h3>
+    <p class="muted center tiny reveal" style="margin: 0.5rem auto 1.4rem; max-width: 760px;">
+      Generated from text prompts under in-house pretraining only (256 → 640 resolution, no SFT, no high-quality data curation). Click any image to view it full size — use ←/→ to browse.
+    </p>
+
+    <div class="unified-gallery reveal">
+      <div class="tile"><img src="static/images/unified/t2i_56.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_67.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_82.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_83.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_86.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_99.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_103.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_123.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_134.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_275.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_280.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_308.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_323.png" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_344.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_411.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_417.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_429.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_580.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_591.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_641.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_689.jpeg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_696.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_721.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_760.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_765.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_807.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_808.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_850.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_884.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_h1.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_h2.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_h4.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_h5.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_h6.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_h7.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_h8.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_h9.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_h10.jpg" alt="Cola DLM text-to-image sample" loading="lazy"></div>
+      <div class="tile"><img src="static/images/unified/t2i_l1.jpg"  alt="Cola DLM text-to-image sample" loading="lazy"></div>
+    </div>
+
+    <p class="muted center reveal" style="max-width: 880px; margin: 1.6rem auto 0; font-size: 0.94rem;">
+      The hierarchical latent-prior formulation of Cola DLM extends beyond text-only generation:
+      a shared prior organizes global cross-modal semantics, while modality-specific decoders
+      handle final realization. This is intentionally early-stage; comprehensive unified
+      multimodal training is left for future work.
+    </p>
+  </div>
+</section>
+
+<!-- ==== REFLECTIONS / RESEARCH SIGNIFICANCE ==== -->
+<section class="section is-soft" id="reflections">
+  <div class="container">
+    <div class="section-heading reveal">
+      <span class="eyebrow">Reflections · Afterword</span>
+      <h2>Why a hierarchical latent-space view matters</h2>
+      <p class="lead">
+        We reproduce the paper's afterword in full below — the broader picture of learning that
+        Cola DLM is in dialogue with. Three threads — <b>representation</b>, <b>objective</b>,
+        and <b>environment</b> — are not separate, but three faces of one systematic question
+        about how a learning system should organize information.
+      </p>
+    </div>
+
+    <article class="afterword-passage reveal" id="afterwordPassage">
+      <header class="afterword-head">
+        <span class="afterword-kicker">From the paper</span>
+        <h3>Afterword: Research Objectives and Significance</h3>
+      </header>
+
+      <div class="afterword-fulltext" id="afterwordText">
+
+        <p>
+          Viewed from a broader perspective, this study is not only concerned with proposing an
+          alternative architecture for text generation, but also with clarifying a more general
+          picture of learning in which <em>representation</em>, <em>objective</em>, and
+          <em>environment</em> must be understood jointly. From this perspective, the three themes
+          of this work are closely connected rather than independent. The first concerns how text
+          should be represented and generated. The second concerns what kinds of objectives and
+          evaluation criteria are genuinely aligned with such representations. The third concerns
+          the kind of environment in which a model should ultimately learn if the goal is more
+          general multimodal intelligence.
+        </p>
+
+          <p>
+            A useful starting point is to formalize learning itself as a model–environment
+            interaction system. Let the environment be
+          </p>
+          \[
+          \mathcal{E} = (\Omega,\, \mathcal{O},\, \mathcal{A},\, \mathcal{T},\, \mathcal{F},\, \mathcal{G}),
+          \tag{1}
+          \]
+          <p>
+            where \(\Omega\) is the environment state space, \(\mathcal{O}\) is the observation
+            space, \(\mathcal{A}\) is the action or output space, \(\mathcal{T}\) is the state
+            transition mechanism, \(\mathcal{F}\) is the feedback generation mechanism, and
+            \(\mathcal{G}\) is the rule that converts feedback into optimization signals.
+            Importantly, the notion of environment is understood here in a broad sense: it
+            includes not only the external world, but also the data distribution presented to the
+            model, task formats, supervision protocols, and even the loss rules by which feedback
+            is transformed into gradients.
+          </p>
+
+          <p>
+            Let the model be denoted by \(M_\theta\), with internal state space \(\mathcal{H}\),
+            state update map \(U_\theta\), and policy or generation map \(\Pi_\theta\). At
+            interaction step \(t\), the closed-loop system can be written as
+          </p>
+          \[
+          \begin{aligned}
+            o_t &amp;\sim P_{\mathcal{E}}(\cdot \mid \omega_t), \\
+            h_t &amp;= U_\theta(h_{t-1}, o_t), \\
+            a_t &amp;\sim \Pi_\theta(\cdot \mid h_t), \\
+            \xi_t &amp;\sim \mathcal{F}(\cdot \mid \omega_t, o_t, a_t), \\
+            \omega_{t+1} &amp;\sim \mathcal{T}(\cdot \mid \omega_t, o_t, a_t, \xi_t), \\
+            \ell_t &amp;= \mathcal{G}(\omega_t, o_t, a_t, \xi_t).
+          \end{aligned}
+          \]
+          <p>The overall learning objective is therefore</p>
+          \[
+          \mathcal{J}(\theta;\, \mathcal{E})
+          \;=\;
+          \mathbb{E}_{\tau \sim P(\tau \mid \theta, \mathcal{E})}
+          \!\left[\sum_{t=1}^{T} \gamma^{t-1}\, \ell_t \right],
+          \tag{2}
+          \]
+          <p>
+            where \(\tau\) denotes a complete interaction trajectory and \(\gamma\) is the
+            discount factor.
+          </p>
+
+          <p>
+            This formalization shows directly that learning is never an isolated question of
+            model structure alone. Rather, it is jointly determined by three factors: first, the
+            state space in which the model absorbs and organizes information; second, the kind of
+            feedback through which the environment defines improvement; and third, the actual
+            structure that generates observations, transitions, and feedback. In this work, these
+            three aspects correspond precisely to the three recurring themes of the paper: how
+            text should be represented, which metrics are aligned with the true learning
+            objective, and what kind of environment unified models are ultimately meant to enter.
+          </p>
+
+          <h4>1 · Rethinking text modeling: from state space to hierarchical generation</h4>
+
+          <p>
+            From a system-level perspective, the central question of text modeling is not merely
+            which generation order to adopt, but rather in what kind of <em>state</em> text
+            should be represented within the learning system. Mainstream autoregressive language
+            models bind the state tightly to the surface token prefix, and generation is
+            therefore written as
+          </p>
+          \[
+          p_{\mathrm{AR}}(x) = \prod_{t=1}^{n} p_\theta(x_t \mid x_{&lt;t}).
+          \tag{3}
+          \]
+          <p>
+            This factorization is highly effective, but it fundamentally corresponds to a strong
+            modeling assumption: both global semantics and local realization are propagated
+            through the same token-level conditional chain. In other words, it assumes that the
+            surface string itself is the most natural and primary state space.
+          </p>
+
+          <p>
+            The route explored in this paper instead reconsiders text generation from the level
+            of the state space itself. If text indeed contains a low-dimensional yet sufficiently
+            useful global semantic structure, then a more natural approach is not to place the
+            entire burden of generation on a token-level chain factorization, but to introduce
+            latent variables explicitly and model high-level semantic organization separately
+            from local textual realization. Correspondingly, the core factorization of Cola DLM
+            is
+          </p>
+          \[
+          p(x, z_0) = p_\theta(x \mid z_0)\, p_\psi(z_0),
+          \qquad
+          p(x) = \int p_\theta(x \mid z_0)\, p_\psi(z_0)\, dz_0,
+          \tag{4}
+          \]
+          <p>
+            where \(z_0\) is a continuous latent variable, \(p_\psi(z_0)\) is the latent prior,
+            and \(p_\theta(x \mid z_0)\) is the conditional decoder. The crucial change here is
+            not merely the introduction of latent variables, but the redefinition of the role of
+            <em>state</em> in the system: the path no longer acts directly on observation
+            recovery, but instead organizes global semantics in latent space first, after which
+            the decoder carries out local textual realization.
+          </p>
+
+          <p>
+            This point can be stated compactly through the information decomposition of the
+            average ELBO. Let
+            \(q(x, z_0) := p_{\mathrm{data}}(x)\, q_\phi(z_0 \mid x)\); then
+          </p>
+          \[
+          \mathbb{E}_{p_{\mathrm{data}}(x)}\!\big[\mathcal{L}_{\mathrm{ELBO}}(x)\big]
+          =
+          \mathbb{E}_{q(x, z_0)}\!\big[\log p_\theta(x \mid z_0)\big]
+          \,-\,
+          I_q(X;\, Z_0)
+          \,-\,
+          \mathrm{KL}\!\big(\bar q_\phi(z_0)\,\|\,p_\psi(z_0)\big),
+          \tag{5}
+          \]
+          <p>
+            where \(\bar q_\phi(z_0)\) is the aggregated posterior. This decomposition shows that
+            hierarchical latent-space modeling breaks the text problem into three coupled but
+            analytically distinguishable components: <b>conditional realization</b>,
+            <b>information compression</b>, and <b>prior matching</b>. The latent variable is
+            therefore not merely a continuous surrogate for discrete tokens, but an explicit
+            intermediate state through which global semantic organization can be separated from
+            local textual realization and modeled on its own terms.
+          </p>
+
+          <p>
+            From this perspective, compression must also be reconsidered. Prior work has
+            emphasized the connection between compression and intelligence
+            <span class="cite">(Huang et&nbsp;al., 2024)</span>, while recent explorations of
+            generation closer to raw data forms in images and videos, such as pixel-space
+            modeling <span class="cite">(Deng et&nbsp;al., 2026)</span>, further suggest that
+            compression should not be equated with harmful information deletion. The key question
+            is not whether every local detail is preserved, but whether the model can extract and
+            organize structural information that is genuinely effective and generalizable. If
+            text indeed admits a hierarchical structure in which high-level semantics and
+            low-level realization are relatively separable, then reinterpreting text generation
+            through informational hierarchy is not merely a change of method, but a theoretical
+            re-evaluation of text modeling itself.
+          </p>
+
+          <p>
+            Accordingly, the first theme of this paper is not to reject autoregression, but to
+            point out that autoregression occupies only one self-consistent, rather than unique,
+            corner of the design space. If the data truly contains a hierarchy between
+            low-dimensional global semantics and high-dimensional local realization, then
+            organizing semantics first in a latent state and realizing text through conditional
+            decoding may be closer to the true generative mechanism. Text generation should
+            therefore not be understood solely as next-token fitting over discrete strings, but
+            more generally as a systematic problem of how information is represented, compressed,
+            and organized hierarchically.
+          </p>
+
+          <h4>2 · Continuous extension of discrete text: a shift in evaluation emphasis</h4>
+
+          <p>
+            Once the state space of the system is changed, the issue at the objective level
+            changes accordingly. For conventional autoregressive language models, the training
+            objective and evaluation quantities are naturally well aligned: maximum likelihood
+            training directly corresponds to probability fitting over text, and likelihood and
+            perplexity therefore have a clear and stable interpretation. In hierarchical
+            continuous latent-space models, however, the actual training path is no longer direct
+            token-level maximum likelihood, but a hierarchical objective jointly composed of
+            reconstruction, latent prior learning, and representation regularization.
+          </p>
+
+          <p>This can be seen from the relation between the ELBO and the true marginal likelihood:</p>
+          \[
+          -\mathcal{L}_{\mathrm{ELBO}}(x)
+          \;=\;
+          -\log p_{\theta,\psi}(x)
+          \;+\;
+          \mathrm{KL}\!\big(q_\phi(z_0 \mid x)\,\|\,p_{\theta,\psi}(z_0 \mid x)\big).
+          \tag{6}
+          \]
+          <p>
+            This shows that even at the level of the ELBO, the training objective is already
+            separated from the true log-likelihood by a variational <em>inference gap</em>.
+            Furthermore, in the actual training of Cola DLM, the model must jointly learn latent
+            reconstruction, continuous prior fitting, and representation stabilization. The
+            quantity being optimized is therefore not a single token-level likelihood in the
+            classical sense.
+          </p>
+
+          <p>
+            For this reason, the mismatch should not be interpreted as a failure to learn, but
+            rather as evidence that the model is learning something different. For autoregressive
+            models and other paradigms that directly fit discrete distributions, likelihood and
+            perplexity remain highly informative because they are naturally aligned with the
+            training objective. For hierarchical continuous latent-space models, by contrast, the
+            central issue is no longer whether local discrete distributions are fitted as sharply
+            as possible, but whether higher-level semantic structures are effectively organized,
+            whether the latent prior is well learned, and whether the final generations satisfy
+            the actual task requirements.
+          </p>
+
+          <p>
+            From the perspective of systematic modeling, this phenomenon is in fact expected:
+            when the state space expands from surface tokens to hierarchical latent variables,
+            the optimization target correspondingly shifts from precise fitting of local discrete
+            distributions to the organization of higher-level semantic structure, stable latent
+            prior learning, and satisfaction of the true generative objective. For this route,
+            generation-oriented metrics are therefore often more closely aligned with what the
+            model is actually trained to do than perplexity. More importantly, model potential is
+            often reflected more clearly in <b>scaling behavior</b> than in any single static
+            likelihood value: what matters is whether capability continues to improve steadily as
+            model size, data, and compute increase, rather than whether local fit under a
+            particular pointwise metric is better.
+          </p>
+
+          <p>
+            This can also be connected to the perspective of the three governing curves developed
+            in the theoretical analysis of the paper. For Cola DLM, the applicability of this
+            route is not determined by a single likelihood value, but by whether three conditions
+            hold simultaneously: the representation rate–distortion curve is already favorable at
+            relatively low rate, the approximation error of the latent prior continues to
+            decrease, and the inference gap remains controllable. In other words, the advantage
+            of this route is not guaranteed automatically by latent variables or flow-based
+            modeling themselves; it depends on whether the data truly contains a compressible
+            global semantic structure, and whether the model can learn, fit, and realize that
+            structure in a stable manner.
+          </p>
+
+          <p>
+            The second theme of this paper is therefore not merely that perplexity is inadequate,
+            but that <b>evaluation language itself must change</b> once representation and
+            objective have changed. For this class of models, generation quality and scaling
+            behavior are often closer to the model's true capability and long-term potential than
+            traditional perplexity.
+          </p>
+
+          <h4>3 · Unified models, model–environment interaction, and the value of multimodal unification</h4>
+
+          <p>
+            If we return again to the model–environment formalization in Eq.&nbsp;(1) and
+            Eq.&nbsp;(2), the third theme becomes more natural. The importance of unified models
+            does not lie merely in placing multiple modalities within a single parameterized
+            network, but in changing the structure of the <em>environment</em> in which the model
+            learns. In the real world, observations, transitions, and feedback are usually not
+            generated independently across modalities; rather, they are often jointly determined
+            by a shared latent state. A more general learning system therefore requires not a set
+            of isolated modality interfaces placed side by side, but unified representations that
+            can enter the same interaction state and share the same dynamical constraints.
+          </p>
+
+          <p>
+            This is closely related to two broader views of intelligence. One influential view
+            understands intelligence as a collection of skills across tasks
+            <span class="cite">(Chollet, 2019)</span>. Under this view, a system becomes more
+            capable because it can solve problems across more domains and under more diverse
+            forms of supervision and interaction. The recent development of large language models
+            partly reflects this tendency. A representative example is the progress of code
+            agents that can operate within command-line environments. In such environments, the
+            observation space, action space, and feedback mechanism are unusually well aligned
+            with discrete symbolic representations. Interaction trajectories are easy to record,
+            and correctness is often straightforward to verify, so these environments provide
+            dense and precise learning signals.
+          </p>
+
+          <p>
+            Another view, closer to the world-model perspective, holds that intelligence consists
+            in acquiring an internal model of the structure and dynamics of the world. Recent
+            work on world models <span class="cite">(Tu et&nbsp;al., 2025)</span> moves in this
+            direction by seeking to learn richer environmental dynamics, thereby supporting
+            stronger generalization and more realistic interaction. From this perspective, the
+            question is not only how many tasks a model can solve, but whether it learns in an
+            environment whose structure is rich enough to induce the right abstractions. The
+            environment therefore becomes central: a model can only internalize the regularities
+            that are actually present in the observations, transitions, and feedback it
+            encounters.
+          </p>
+
+          <p>This can also be written more formally. Let the observation at step \(t\) be multimodal,</p>
+          \[
+          o_t = \big(o_t^{(1)},\, o_t^{(2)},\, \dots,\, o_t^{(M)}\big),
+          \qquad
+          o_t^{(m)} \in \mathcal{O}^{(m)},
+          \tag{7}
+          \]
+          <p>and suppose there exists a joint latent state</p>
+          \[
+          z_t = \Phi\!\left(o_t^{(1)},\, \dots,\, o_t^{(M)}\right),
+          \tag{8}
+          \]
+          <p>
+            such that feedback and transition depend primarily on this joint state rather than on
+            marginal factorizations over modalities:
+          </p>
+          \[
+          \xi_t,\, \omega_{t+1} \;\sim\; p\!\left(\xi_t,\, \omega_{t+1} \mid z_t,\, a_t\right).
+          \tag{9}
+          \]
+          <p>If the true environmental dynamics satisfy</p>
+          \[
+          p\!\left(\xi_t,\, \omega_{t+1} \mid o_t,\, a_t\right)
+          \;\neq\;
+          \prod_{m=1}^{M} p_m\!\left(\xi_t^{(m)},\, \omega_{t+1}^{(m)} \mid o_t^{(m)},\, a_t^{(m)}\right),
+          \tag{10}
+          \]
+          <p>
+            then the learning problem is structurally <b>non-separable</b> across modalities. In
+            such a case, treating each modality as an independent channel and only combining them
+            superficially is generally insufficient. The theoretical significance of unified
+            models lies precisely in the fact that the environment itself is non-separable in the
+            sense of Eq.&nbsp;(10): the regularities that determine useful feedback are joint
+            regularities rather than regularities defined on the marginal distribution of each
+            modality.
+          </p>
+
+          <p>
+            This clarifies why multimodal unification is not merely an engineering convenience.
+            Its purpose is not simply to process multiple data types with one backbone, but to
+            allow the model to learn in an environment whose observation, transition, and
+            supervision structure more faithfully reflects the coupled regularities of the real
+            world. In such an environment, both inputs and outputs may be multimodal; useful
+            feedback may depend on how different modalities constrain each other jointly; and the
+            learned internal state should ideally reflect these joint constraints.
+          </p>
+
+          <p>
+            This also explains why text has long been the most difficult component in unified
+            models. Images and videos naturally operate in continuous spaces, whereas text is a
+            prototypically discrete modality. If they are to enter a common interaction state and
+            share latent dynamics, a severe representational mismatch immediately arises. This is
+            precisely one of the central obstacles repeatedly identified in recent unified-model
+            research <span class="cite">(Deng et&nbsp;al., 2025)</span>. In this sense, the
+            significance of Cola DLM lies not only in proposing another text generator, but in
+            providing a natural interface through which discrete text can enter a continuous
+            latent space.
+          </p>
+
+          <p>If discrete text is mapped into a continuous latent variable through</p>
+          \[
+          z^{\mathrm{text}} \sim q_\phi(z \mid x^{\mathrm{text}}),
+          \qquad
+          x^{\mathrm{text}} \sim p_\eta(x \mid z^{\mathrm{text}}),
+          \tag{11}
+          \]
+          <p>
+            then text acquires an interface compatible with other continuous modalities. One may
+            then define a unified interaction state
+          </p>
+          \[
+          \tilde z_t \;=\; \Psi\!\left(z_t^{\mathrm{text}},\, z_t^{\mathrm{img}},\, z_t^{\mathrm{vid}},\, \dots \right),
+          \tag{12}
+          \]
+          <p>
+            and perform state evolution, decision making, and feedback modeling at this level.
+            Equations&nbsp;(11)–(12) formalize why Cola DLM may matter beyond text generation
+            itself: its role is not only to generate text through a different path, but to
+            provide a bridge through which an intrinsically discrete modality can participate in
+            a continuous multimodal interaction state. In other words, it reduces the structural
+            mismatch that otherwise prevents text from naturally entering a shared continuous
+            environment.
+          </p>
+
+          <p>
+            This is why the broader significance of Cola DLM is better understood through
+            model–environment interaction than through single-modality benchmarks alone. If
+            learning is viewed as the optimization of Eq.&nbsp;(2) in richer and more realistic
+            environments, then unified models matter because they expand the environments in
+            which the model can learn. If text is to participate fully in such environments, then
+            a bridge such as that in Eq.&nbsp;(11) becomes especially desirable. In this sense,
+            Cola DLM is not merely an alternative text generator; it can also be understood as a
+            candidate mechanism for aligning discrete text with continuous multimodal learning
+            systems.
+          </p>
+
+          <h4>4 · The three themes under a unified perspective</h4>
+
+          <p>
+            In summary, the three themes of this paper are not separate supplementary
+            discussions, but three manifestations of the same systematic problem. The first
+            concerns the <em>representation level</em>: whether text should be modeled entirely
+            on the token surface, or whether higher-level semantics can be organized in an
+            independent latent state. The second concerns the <em>objective level</em>: once the
+            model is trained through latent transport, reconstruction, and regularization rather
+            than direct token-level maximum likelihood, which metrics remain genuinely aligned
+            with the learning problem. The third concerns the <em>environment level</em>: if
+            learning is ultimately model–environment interaction, then what kind of environment
+            future models should inhabit, and what representational interfaces are needed for
+            different modalities to become compatible within it.
+          </p>
+
+          <p>
+            From this perspective, autoregressive language modeling occupies a self-consistent
+            corner of the design space: representation is tightly bound to surface tokens, the
+            training objective is direct likelihood maximization, and the environment is largely
+            symbolic and text-centered. The route explored in this work changes all three
+            assumptions simultaneously. It introduces a hierarchical latent-variable
+            representation for text, thereby changing the representational assumption; it moves
+            optimization away from direct token-level likelihood, thereby weakening the central
+            interpretive role of perplexity; and it provides a continuous interface for discrete
+            text, thereby making text potentially more compatible with multimodal environments
+            that are more naturally expressed in continuous latent space.
+          </p>
+
+          <p>
+            We therefore hope that the contribution of this work is not only a viable alternative
+            path for text generation, but also a more systematic way of thinking that jointly
+            considers representation, objective alignment, and environment design. More broadly,
+            we hope it encourages future research to rethink text, images, videos, and other
+            modalities not as isolated domains that must be solved separately, but as components
+            of a larger learning system in which unified representation, unified objectives, and
+            unified environments may become increasingly central to the development of more
+            general multimodal intelligence.
+          </p>
+
+      </div>
+
+      <button type="button" class="afterword-toggle" id="afterwordToggle"
+              aria-expanded="false" aria-controls="afterwordText">
+        <span class="show-text">Show full afterword</span>
+        <span class="hide-text">Collapse</span>
+        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </article>
+
+  </div>
+</section>
+
+<!-- ==== AUTHOR'S NOTE / READING GUIDE ==== -->
+<section class="section" id="authors-note">
+  <div class="container narrow">
+    <div class="section-heading reveal">
+      <span class="eyebrow">From the Authors</span>
+      <h2>A letter to the community</h2>
+      <p class="lead">
+        A more personal, first-person take on what Cola DLM is really trying to say — and an
+        invitation for everyone to push the conversation further.
+      </p>
+    </div>
+
+    <article class="authors-note reveal">
+      <div class="authors-note-body">
+        <p>
+          Personally, I believe that
+          <strong>representation is the central problem of this work</strong>.
+        </p>
+
+        <p>
+          What Cola DLM aims to emphasize is not merely diffusion itself, but a more fundamental
+          perspective: must language modeling necessarily be bound to discrete tokens? Tokens are
+          only the surface carriers of language, while what is truly more stable and transferable
+          may be the continuous semantic representations hidden behind different token realizations.
+        </p>
+
+        <p>
+          Therefore, what we care more about is how to decompose text generation into two levels
+          through a hierarchical modeling approach: one level is high-level semantic organization
+          in continuous space, and the other is the realization of concrete token sequences. In
+          other words, the <em>VAE</em> is responsible for establishing a semantic interface from
+          text to latent space, the <em>DiT</em> is responsible for modeling the continuous latent
+          prior, and the <em>decoder</em> then instantiates latent semantics into text. But from a
+          more general perspective, the VAE is not the only choice; it can be replaced by other
+          stronger representation models. Diffusion is also not the only choice; it can be
+          replaced by other continuous distribution matching or prior modeling methods. What we
+          truly want to explore is:
+          <strong>does there exist an information carrier that is more efficient, more elegant,
+          and closer to the essence of semantics than discrete tokens?</strong>
+        </p>
+
+        <p>
+          The compression experiments in the paper&rsquo;s discussion section also provide a very
+          interesting signal: when latent grouping is aligned with text boundaries, simple
+          2&times; compression does not necessarily harm generation, and may even lead to better
+          results. This suggests that the token-level carrier may not be the optimal form of
+          information load; a moderately compressed continuous latent may be more suitable for
+          carrying global semantic structure, while leaving local expression details to the
+          decoder. This is exactly the core point that Cola DLM tries to convey: we do not merely
+          want to recover tokens, but to learn the semantic structures behind tokens.
+        </p>
+
+        <p>
+          Furthermore, this idea naturally points toward unified multimodal modeling.
+          Representation learning in vision has already developed very maturely, whereas text has
+          long been dominated more by tokenization. In the final section of the discussion, we
+          provide a preliminary sample that attempts to place visual prior representations and
+          textual prior representations into the same continuous space for unified modeling.
+          Although this result is still very preliminary, it at least suggests that latent
+          representations from different modalities are not completely isolated from each other;
+          they may have the opportunity to become compatible and aligned with one another in a
+          higher-level semantic space.
+        </p>
+
+        <p>
+          Of course, this is only a beginning. How representations from different modalities
+          interact with each other, how to construct text latents that are more efficient, more
+          abstract, and more semantic, and how to balance compression ratio, semantic fidelity,
+          and the difficulty of prior modeling are all questions that are highly worth deeper
+          exploration in the future.
+        </p>
+
+        <p class="authors-note-thanks">
+          Finally, we sincerely thank the community for its attention, discussion, and promotion
+          of Cola DLM. We warmly welcome everyone to discuss it with us, and we sincerely hope to
+          receive more feedback, suggestions, and criticism. This is a relatively radical attempt,
+          and many problems are still far from being solved. Every comment from the community will
+          be extremely helpful for shaping our future research directions. Thank you all!
+        </p>
+      </div>
+    </article>
+  </div>
+</section>
+
+<!-- ==== BIBTEX ==== -->
+<section class="section is-tight" id="bibtex">
+  <div class="container narrow">
+    <div class="section-heading reveal">
+      <span class="eyebrow">Cite</span>
+      <h2>BibTeX</h2>
+    </div>
+    <div class="bibtex-block reveal">
+      <button class="copy-btn" type="button">Copy</button>
+<pre>@article{guo2026cola,
+  title   = {Cola DLM: Continuous Latent Diffusion Language Model},
+  author  = {Guo, Hongcan and Zhao, Qinyu and Zhao, Yian and Nie, Shen
+             and Zhu, Rui and Guo, Qiushan and Wang, Feng and Yang, Tao
+             and Zhao, Hengshuang and Wei, Guoqiang and Zeng, Yan},
+  journal = {arXiv preprint arXiv:2605.06548},
+  year    = {2026}
+}</pre>
+    </div>
+  </div>
+</section>
+
+<!-- ==== FOOTER ==== -->
+<footer class="footer">
+  <img src="static/images/bytedance_seed.png" alt="ByteDance Seed" class="seed-logo">
+  <div class="small">
+    © 2026 ByteDance Seed. All trademarks belong to their respective owners.
+    <br>
+    Page template adapted from <a href="https://nerfies.github.io/" target="_blank" rel="noopener">Nerfies</a>
+    /
+    <a href="https://github.com/eliahuhorwitz/Academic-project-page-template" target="_blank" rel="noopener">Academic Project Page Template</a>.
+  </div>
+  <div class="visitor-map" aria-label="Visitor map">
+    <script type="text/javascript" id="clustrmaps" src="//clustrmaps.com/map_v2.js?d=ZwKYNaf8u20oZ-UzLMkHSju80-YS0FiAtJd-H4Yl0Qc&cl=ffffff&w=a"></script>
+  </div>
+</footer>
+
+<!-- ==== Lightbox & back-to-top ==== -->
+<div class="lightbox" aria-hidden="true">
+  <button class="lb-btn lb-close" aria-label="Close">✕</button>
+  <button class="lb-btn lb-prev" aria-label="Previous">‹</button>
+  <button class="lb-btn lb-next" aria-label="Next">›</button>
+  <img src="" alt="Sample preview">
+  <span class="lb-counter">1 / 1</span>
+</div>
+
+<button class="back-to-top" aria-label="Back to top">
+  <svg viewBox="0 0 24 24"><polyline points="6 14 12 8 18 14"/></svg>
+</button>
+
+<script src="static/js/index.js"></script>
+</body>
+</html>
