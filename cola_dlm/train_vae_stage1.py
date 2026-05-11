@@ -20,6 +20,7 @@ from cola_dlm.config_io import (
     save_config,
 )
 from cola_dlm.dataset import TokenizedTextDataset
+from cola_dlm.diagnostic_report import write_diagnostics_report
 from cola_dlm.logging import JSONLMetricsLogger
 from cola_dlm.precision import bf16_autocast
 from cola_dlm.stage1 import stage1_pretraining_step
@@ -106,6 +107,7 @@ def train(
     checkpoint_config = _checkpoint_config(config, run_metadata)
     checkpoint_dir = options.output_dir / "checkpoints"
     log_path = options.output_dir / "metrics.jsonl"
+    final_metrics_record: dict[str, Any] | None = None
 
     with JSONLMetricsLogger(log_path) as logger:
         while global_step < options.max_steps:
@@ -130,9 +132,10 @@ def train(
 
             scheduler.step()
             global_step = step
+            metrics = loss.as_dict()
+            final_metrics_record = {"step": step, **metrics, "lr": lr}
 
             if step % options.log_every == 0:
-                metrics = loss.as_dict()
                 logger.log(step, {**metrics, "lr": lr})
 
             if step % options.checkpoint_every == 0:
@@ -145,13 +148,21 @@ def train(
                     config=checkpoint_config,
                 )
 
+    final_checkpoint = checkpoint_dir / "final.pt"
     _save_stage1_checkpoint(
-        checkpoint_dir / "final.pt",
+        final_checkpoint,
         model=model,
         optimizer=optimizer,
         scheduler=scheduler,
         step=global_step,
         config=checkpoint_config,
+    )
+    write_diagnostics_report(
+        options.output_dir / "diagnostics_report.md",
+        stage_name="Stage 1",
+        metrics_record=final_metrics_record or {"step": global_step},
+        checkpoint_path=final_checkpoint,
+        metrics_path=log_path,
     )
     return global_step
 

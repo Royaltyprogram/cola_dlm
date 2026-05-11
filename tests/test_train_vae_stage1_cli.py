@@ -24,11 +24,13 @@ def test_stage1_cli_smoke_writes_checkpoint_config_and_jsonl(tmp_path):
     final_checkpoint = output_dir / "checkpoints" / "final.pt"
     config_snapshot = output_dir / "config.json"
     log_file = output_dir / "metrics.jsonl"
+    diagnostics_report = output_dir / "diagnostics_report.md"
 
     assert checkpoint.exists()
     assert final_checkpoint.exists()
     assert config_snapshot.exists()
     assert log_file.exists()
+    assert diagnostics_report.exists()
 
     loaded = load_checkpoint(final_checkpoint)
     assert loaded.step == 1
@@ -53,6 +55,38 @@ def test_stage1_cli_smoke_writes_checkpoint_config_and_jsonl(tmp_path):
         "posterior_variance_mean",
         "lr",
     } <= set(records[0])
+
+    report = diagnostics_report.read_text(encoding="utf-8")
+    assert "Final step: 1" in report
+    assert "`reconstruction_nll`" in report
+    assert "`reconstruction_accuracy`" in report
+    assert "`kl`" in report
+    assert "`logsnr`" in report
+    assert "`latent_norm_mean`" in report
+    assert "`posterior_variance_mean`" in report
+
+
+def test_stage1_cli_report_uses_final_metrics_when_not_logged(tmp_path):
+    token_file = _write_token_file(tmp_path)
+    output_dir = tmp_path / "run"
+
+    assert main(
+        _args(
+            token_file,
+            output_dir,
+            max_steps=1,
+            extra=["--log-every", "10"],
+        )
+    ) == 0
+
+    records = _read_jsonl(output_dir / "metrics.jsonl")
+    assert records == []
+
+    report = (output_dir / "diagnostics_report.md").read_text(encoding="utf-8")
+    assert "Final step: 1" in report
+    assert "`reconstruction_nll`" in report
+    assert "`reconstruction_accuracy`" in report
+    assert "`logsnr`" in report
 
 
 def test_stage1_cli_resume_advances_from_saved_step(tmp_path):

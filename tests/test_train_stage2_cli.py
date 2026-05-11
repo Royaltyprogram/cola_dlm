@@ -25,11 +25,13 @@ def test_stage2_cli_smoke_writes_named_checkpoint_and_jsonl(tmp_path):
     final_checkpoint = output_dir / "checkpoints" / "final.pt"
     config_snapshot = output_dir / "config.json"
     log_file = output_dir / "metrics.jsonl"
+    diagnostics_report = output_dir / "diagnostics_report.md"
 
     assert checkpoint.exists()
     assert final_checkpoint.exists()
     assert config_snapshot.exists()
     assert log_file.exists()
+    assert diagnostics_report.exists()
 
     payload = _load_raw_checkpoint(final_checkpoint)
     assert payload["model"] is None
@@ -59,6 +61,20 @@ def test_stage2_cli_smoke_writes_named_checkpoint_and_jsonl(tmp_path):
         "latent_norm_mean",
         "posterior_variance_mean",
     } <= set(records[0])
+
+    report = diagnostics_report.read_text(encoding="utf-8")
+    assert "Final step: 1" in report
+    assert "`reconstruction_nll`" in report
+    assert "`reconstruction_accuracy`" in report
+    assert "`logsnr`" in report
+    assert "`latent_norm_mean`" in report
+    assert "`posterior_variance_mean`" in report
+    assert "`vae_loss`" in report
+    assert "`flow_matching_loss`" in report
+    assert "`reference_kl`" in report
+    assert "`flow_matching_loss_block_0`" in report
+    assert "legend: #=allowed .=denied c=clean n=noisy" in report
+    assert "q00 clean b0:" in report
 
 
 def test_stage2_cli_resume_restores_states_advances_and_keeps_reference_frozen(
