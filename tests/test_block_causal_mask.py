@@ -1,5 +1,7 @@
+import pytest
 import torch
 
+import cola_dlm.block_causal_mask as block_causal_mask
 from cola_dlm.block_causal_mask import (
     CLEAN_SEGMENT_ID,
     NOISY_SEGMENT_ID,
@@ -104,6 +106,59 @@ def test_attention_mask_keeps_clean_context_rows_clean_only_and_block_causal():
         future_clean_keys = clean_block_ids > packed.block_ids[query_index]
         assert mask[query_index, clean_indices][past_or_current_clean_keys].all()
         assert not mask[query_index, clean_indices][future_clean_keys].any()
+
+
+def test_public_surface_lists_supported_imports():
+    assert block_causal_mask.__all__ == [
+        "CLEAN_SEGMENT_ID",
+        "NOISY_SEGMENT_ID",
+        "PackedDiTInputs",
+        "build_block_causal_attention_mask",
+        "build_packed_dit_inputs",
+    ]
+
+
+def test_build_packed_dit_inputs_rejects_invalid_rank():
+    z0, zt = _tiny_latents()
+
+    with pytest.raises(ValueError, match="rank-3"):
+        build_packed_dit_inputs(z0[0], zt, block_size=2)
+
+
+def test_build_packed_dit_inputs_rejects_mismatched_shapes():
+    z0, zt = _tiny_latents()
+
+    with pytest.raises(ValueError, match="matching shapes"):
+        build_packed_dit_inputs(z0, zt[:, :-1], block_size=2)
+
+
+def test_build_packed_dit_inputs_rejects_integer_latents():
+    z0, zt = _tiny_latents()
+
+    with pytest.raises(TypeError, match="floating point"):
+        build_packed_dit_inputs(z0.to(torch.long), zt.to(torch.long), block_size=2)
+
+
+@pytest.mark.parametrize("block_size", [0, -2])
+def test_build_packed_dit_inputs_rejects_non_positive_block_size(block_size):
+    z0, zt = _tiny_latents()
+
+    with pytest.raises(ValueError, match="positive"):
+        build_packed_dit_inputs(z0, zt, block_size=block_size)
+
+
+def test_build_packed_dit_inputs_rejects_oversized_block_size():
+    z0, zt = _tiny_latents()
+
+    with pytest.raises(ValueError, match="less than or equal"):
+        build_packed_dit_inputs(z0, zt, block_size=16)
+
+
+def test_build_packed_dit_inputs_rejects_non_divisible_sequence_length():
+    z0, zt = _tiny_latents()
+
+    with pytest.raises(ValueError, match="divisible"):
+        build_packed_dit_inputs(z0, zt, block_size=3)
 
 
 def _tiny_latents() -> tuple[torch.Tensor, torch.Tensor]:
