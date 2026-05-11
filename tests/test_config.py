@@ -43,6 +43,11 @@ def test_default_configs_use_paper_scale_values():
     assert dit.ffn_size == 8_192
     assert dit.num_attention_heads == 16
     assert dit.attention_head_dim == 128
+    assert dit.positional_encoding == "rope"
+    assert dit.attention_pattern == "block_causal"
+    assert dit.dropout == 0.0
+    assert dit.activation == "gelu"
+    assert dit.use_segment_embedding is False
 
     assert diffusion.timestep_schedule == "logit_normal"
     assert diffusion.logit_normal_loc == 1.0
@@ -143,3 +148,28 @@ def test_vae_config_requires_sequence_length_divisible_by_patch_size():
 def test_vae_config_requires_even_rope_head_dim():
     with pytest.raises(ValueError, match="attention_head_dim must be even"):
         VAEConfig(hidden_size=6, num_attention_heads=2, attention_head_dim=3)
+
+
+def test_dit_config_requires_supported_positional_encoding():
+    with pytest.raises(ValueError, match="positional_encoding must be 'rope'"):
+        DiTConfig(positional_encoding="absolute")
+
+
+def test_dit_config_requires_block_causal_attention():
+    with pytest.raises(ValueError, match="attention_pattern must be 'block_causal'"):
+        DiTConfig(attention_pattern="causal")
+
+
+def test_dit_config_requires_supported_activation():
+    with pytest.raises(ValueError, match="activation must be 'gelu' or 'silu'"):
+        DiTConfig(activation="relu")
+
+
+def test_dit_config_requires_dropout_less_than_one():
+    with pytest.raises(ValueError, match="dropout must be less than 1"):
+        DiTConfig(dropout=1.0)
+
+
+def test_dit_config_requires_even_rope_head_dim():
+    with pytest.raises(ValueError, match="attention_head_dim must be even"):
+        DiTConfig(hidden_size=6, num_attention_heads=2, attention_head_dim=3)

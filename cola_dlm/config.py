@@ -92,6 +92,9 @@ class DiTConfig:
     attention_head_dim: int = 128
     positional_encoding: str = "rope"
     attention_pattern: str = "block_causal"
+    dropout: float = 0.0
+    activation: str = "gelu"
+    use_segment_embedding: bool = False
 
     def __post_init__(self) -> None:
         _require_positive("sequence_length", self.sequence_length)
@@ -102,13 +105,28 @@ class DiTConfig:
         _require_positive("ffn_size", self.ffn_size)
         _require_positive("num_attention_heads", self.num_attention_heads)
         _require_positive("attention_head_dim", self.attention_head_dim)
+        _require_non_negative("dropout", self.dropout)
 
         if self.block_size > self.sequence_length:
             raise ValueError("block_size must be no larger than sequence_length")
         if self.sequence_length % self.block_size != 0:
             raise ValueError("sequence_length must be divisible by block_size")
         if self.hidden_size != self.num_attention_heads * self.attention_head_dim:
-            raise ValueError("hidden_size must equal num_attention_heads * attention_head_dim")
+            raise ValueError(
+                "hidden_size must equal num_attention_heads * attention_head_dim"
+            )
+        if self.positional_encoding != "rope":
+            raise ValueError("positional_encoding must be 'rope'")
+        if self.attention_pattern != "block_causal":
+            raise ValueError("attention_pattern must be 'block_causal'")
+        if self.dropout >= 1:
+            raise ValueError("dropout must be less than 1")
+        if self.activation not in ("gelu", "silu"):
+            raise ValueError("activation must be 'gelu' or 'silu'")
+        if self.positional_encoding == "rope" and self.attention_head_dim % 2 != 0:
+            raise ValueError(
+                "attention_head_dim must be even when positional_encoding='rope'"
+            )
 
 
 @dataclass
