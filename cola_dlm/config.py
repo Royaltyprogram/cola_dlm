@@ -42,6 +42,11 @@ class VAEConfig:
     decoder_layers: int = 4
     hidden_size: int = 1_536
     ffn_size: int = 6_144
+    num_attention_heads: int = 12
+    attention_head_dim: int = 128
+    dropout: float = 0.0
+    activation: str = "gelu"
+    use_rope: bool = True
     attention_pattern: str = "causal"
 
     def __post_init__(self) -> None:
@@ -53,9 +58,24 @@ class VAEConfig:
         _require_positive("decoder_layers", self.decoder_layers)
         _require_positive("hidden_size", self.hidden_size)
         _require_positive("ffn_size", self.ffn_size)
+        _require_positive("num_attention_heads", self.num_attention_heads)
+        _require_positive("attention_head_dim", self.attention_head_dim)
+        _require_non_negative("dropout", self.dropout)
 
         if self.sequence_length % self.patch_size != 0:
             raise ValueError("sequence_length must be divisible by patch_size")
+        if self.attention_pattern != "causal":
+            raise ValueError("attention_pattern must be 'causal'")
+        if self.hidden_size != self.num_attention_heads * self.attention_head_dim:
+            raise ValueError(
+                "hidden_size must equal num_attention_heads * attention_head_dim"
+            )
+        if self.dropout >= 1:
+            raise ValueError("dropout must be less than 1")
+        if self.activation not in ("gelu", "silu"):
+            raise ValueError("activation must be 'gelu' or 'silu'")
+        if self.use_rope and self.attention_head_dim % 2 != 0:
+            raise ValueError("attention_head_dim must be even when use_rope=True")
 
 
 @dataclass

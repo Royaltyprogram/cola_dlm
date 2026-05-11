@@ -1,3 +1,5 @@
+import pytest
+
 from cola_dlm.config import (
     DiTConfig,
     DiffusionConfig,
@@ -21,10 +23,17 @@ def test_default_configs_use_paper_scale_values():
     assert vae.vocab_size == 100_278
     assert vae.sequence_length == 512
     assert vae.latent_dim == 16
+    assert vae.patch_size == 1
     assert vae.encoder_layers == 4
     assert vae.decoder_layers == 4
     assert vae.hidden_size == 1_536
     assert vae.ffn_size == 6_144
+    assert vae.num_attention_heads == 12
+    assert vae.attention_head_dim == 128
+    assert vae.dropout == 0.0
+    assert vae.activation == "gelu"
+    assert vae.use_rope is True
+    assert vae.attention_pattern == "causal"
 
     assert dit.sequence_length == 512
     assert dit.latent_dim == 16
@@ -114,3 +123,23 @@ def test_tiny_config_block_and_sequence_lengths_are_consistent(
         tiny_stage2_config.tokens_per_step
         == tiny_stage2_config.global_batch_size * tiny_dit_config.sequence_length
     )
+
+
+def test_vae_config_requires_causal_attention():
+    with pytest.raises(ValueError, match="attention_pattern must be 'causal'"):
+        VAEConfig(attention_pattern="full")
+
+
+def test_vae_config_requires_attention_heads_to_match_hidden_size():
+    with pytest.raises(ValueError, match="hidden_size must equal num_attention_heads"):
+        VAEConfig(hidden_size=32, num_attention_heads=3, attention_head_dim=8)
+
+
+def test_vae_config_requires_sequence_length_divisible_by_patch_size():
+    with pytest.raises(ValueError, match="sequence_length must be divisible"):
+        VAEConfig(sequence_length=15, patch_size=4)
+
+
+def test_vae_config_requires_even_rope_head_dim():
+    with pytest.raises(ValueError, match="attention_head_dim must be even"):
+        VAEConfig(hidden_size=6, num_attention_heads=2, attention_head_dim=3)

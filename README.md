@@ -43,6 +43,8 @@ tiny_vae = VAEConfig(
     decoder_layers=1,
     hidden_size=32,
     ffn_size=64,
+    num_attention_heads=4,
+    attention_head_dim=8,
 )
 tiny_dit = DiTConfig(
     sequence_length=16,
