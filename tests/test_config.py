@@ -65,63 +65,52 @@ def test_default_configs_use_paper_scale_values():
     assert inference.condition_strategy == "clean_condition_repaint"
 
 
-def test_tiny_configs_can_be_supplied_explicitly():
-    vae = VAEConfig(
-        tokenizer_name="tiny",
-        vocab_size=128,
-        sequence_length=16,
-        latent_dim=4,
-        encoder_layers=1,
-        decoder_layers=1,
-        hidden_size=32,
-        ffn_size=64,
-    )
-    dit = DiTConfig(
-        sequence_length=16,
-        latent_dim=4,
-        block_size=4,
-        num_layers=2,
-        hidden_size=32,
-        ffn_size=64,
-        num_attention_heads=4,
-        attention_head_dim=8,
-    )
-    diffusion = DiffusionConfig(logit_normal_loc=0.0, logit_normal_scale=0.5)
-    optimizer = OptimizerConfig(peak_lr=1.0e-4, warmup_steps=2)
+def test_tiny_stage_configs_retain_supplied_subconfigs(
+    tiny_vae_config,
+    tiny_dit_config,
+    tiny_diffusion_config,
+    tiny_optimizer_config,
+    tiny_stage1_config,
+    tiny_stage2_config,
+):
+    assert tiny_stage1_config.vae is tiny_vae_config
+    assert tiny_stage1_config.optimizer is tiny_optimizer_config
 
-    stage1 = Stage1Config(
-        vae=vae,
-        optimizer=optimizer,
-        global_batch_size=2,
-        tokens_per_step=32,
-        kl_weight=0.1,
-        mask_loss_weight=0.2,
-    )
-    stage2 = Stage2Config(
-        vae=vae,
-        dit=dit,
-        diffusion=diffusion,
-        optimizer=optimizer,
-        global_batch_size=2,
-        tokens_per_step=32,
-        vae_loss_weight=0.3,
-        flow_matching_loss_weight=0.4,
-        reference_kl_weight=0.5,
-    )
-    inference = InferenceConfig(
-        vae=vae,
-        dit=dit,
-        diffusion=diffusion,
-        denoising_steps=2,
-        cfg_scale=1.0,
-        max_new_tokens=4,
-    )
+    assert tiny_stage2_config.vae is tiny_vae_config
+    assert tiny_stage2_config.dit is tiny_dit_config
+    assert tiny_stage2_config.diffusion is tiny_diffusion_config
+    assert tiny_stage2_config.optimizer is tiny_optimizer_config
 
-    assert stage1.vae is vae
-    assert stage2.vae is vae
-    assert stage2.dit is dit
-    assert stage2.diffusion is diffusion
-    assert stage2.optimizer is optimizer
-    assert inference.vae is vae
-    assert inference.dit is dit
-    assert inference.diffusion is diffusion
+
+def test_tiny_inference_config_retains_supplied_subconfigs(
+    tiny_vae_config,
+    tiny_dit_config,
+    tiny_diffusion_config,
+    tiny_inference_config,
+):
+    assert tiny_inference_config.vae is tiny_vae_config
+    assert tiny_inference_config.dit is tiny_dit_config
+    assert tiny_inference_config.diffusion is tiny_diffusion_config
+
+
+def test_tiny_config_block_and_sequence_lengths_are_consistent(
+    tiny_vae_config,
+    tiny_dit_config,
+    tiny_stage1_config,
+    tiny_stage2_config,
+    tiny_inference_config,
+):
+    assert tiny_vae_config.sequence_length == tiny_dit_config.sequence_length
+    assert tiny_vae_config.latent_dim == tiny_dit_config.latent_dim
+    assert tiny_vae_config.sequence_length % tiny_vae_config.patch_size == 0
+    assert tiny_dit_config.sequence_length % tiny_dit_config.block_size == 0
+    assert tiny_dit_config.block_size <= tiny_dit_config.sequence_length
+    assert tiny_inference_config.max_new_tokens <= tiny_dit_config.block_size
+    assert (
+        tiny_stage1_config.tokens_per_step
+        == tiny_stage1_config.global_batch_size * tiny_vae_config.sequence_length
+    )
+    assert (
+        tiny_stage2_config.tokens_per_step
+        == tiny_stage2_config.global_batch_size * tiny_dit_config.sequence_length
+    )
