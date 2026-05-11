@@ -76,6 +76,41 @@ def test_stage1_kl_is_valid_token_average_and_weighted_in_loss():
     assert torch.allclose(loss.loss, expected_nll + 0.25 * expected_kl)
 
 
+def test_stage1_config_weights_map_to_lambda_names(tiny_stage1_config):
+    logits = torch.tensor([[[2.0, 0.0], [0.0, 2.0]]])
+    token_ids = torch.tensor([[0, 1]])
+    kl = torch.tensor([[2.0, 4.0]])
+    mask_labels = torch.tensor([[-100, 1]])
+    output = _make_output(logits, kl=kl)
+
+    loss = compute_stage1_vae_loss(
+        output,
+        token_ids,
+        mask_labels=mask_labels,
+        stage1_config=tiny_stage1_config,
+    )
+
+    selected = mask_labels != -100
+    expected_nll = F.cross_entropy(logits.reshape(-1, 2), token_ids.reshape(-1))
+    expected_mask_loss = F.cross_entropy(logits[selected], mask_labels[selected])
+    expected_loss = (
+        expected_nll
+        + tiny_stage1_config.kl_weight * kl.mean()
+        + tiny_stage1_config.mask_loss_weight * expected_mask_loss
+    )
+    assert torch.allclose(loss.loss, expected_loss)
+
+    overridden = compute_stage1_vae_loss(
+        output,
+        token_ids,
+        mask_labels=mask_labels,
+        stage1_config=tiny_stage1_config,
+        lambda_kl=0.0,
+        lambda_mask=0.0,
+    )
+    assert torch.allclose(overridden.loss, expected_nll)
+
+
 def test_stage1_loss_returns_scalar_frozen_output_fields():
     logits = torch.zeros(1, 2, 3)
     token_ids = torch.tensor([[0, 1]])
@@ -91,17 +126,46 @@ def test_stage1_loss_returns_scalar_frozen_output_fields():
     loss = compute_stage1_vae_loss(output, token_ids)
 
     assert isinstance(loss, Stage1VAELoss)
-    for value in (
-        loss.loss,
-        loss.reconstruction_nll,
-        loss.kl,
-        loss.mask_loss,
-        loss.logsnr,
-    ):
+    for value in loss.as_dict().values():
         assert value.shape == ()
     assert torch.allclose(loss.logsnr, vae_logsnr(mu, logvar))
     with pytest.raises(FrozenInstanceError):
         loss.loss = torch.tensor(0.0)
+
+
+def test_stage1_loss_as_dict_uses_stable_diagnostic_names():
+    logits = torch.zeros(1, 2, 3)
+    token_ids = torch.tensor([[0, 1]])
+    output = _make_output(logits, kl=torch.zeros(1, 2))
+
+    loss = compute_stage1_vae_loss(output, token_ids)
+    diagnostics = loss.as_dict()
+
+    assert tuple(diagnostics) == (
+        "loss",
+        "reconstruction_nll",
+        "kl",
+        "mask_loss",
+        "logsnr",
+    )
+    assert diagnostics["loss"] is loss.loss
+    assert diagnostics["reconstruction_nll"] is loss.reconstruction_nll
+    assert diagnostics["kl"] is loss.kl
+    assert diagnostics["mask_loss"] is loss.mask_loss
+    assert diagnostics["logsnr"] is loss.logsnr
+
+
+def test_stage1_loss_components_are_scalar_on_output_device():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logits = torch.zeros(1, 2, 3, device=device)
+    token_ids = torch.tensor([[0, 1]], device=device)
+    output = _make_output(logits, kl=torch.zeros(1, 2, device=device))
+
+    loss = compute_stage1_vae_loss(output, token_ids)
+
+    for name, value in loss.as_dict().items():
+        assert value.shape == (), name
+        assert value.device == logits.device, name
 
 
 def test_stage1_mask_loss_is_zero_when_lambda_mask_is_zero():
@@ -292,6 +356,7 @@ def test_stage1_pretraining_step_updates_parameter_and_returns_finite_loss(
 
 def test_stage1_pretraining_step_skips_masking_when_lambda_mask_is_zero(
     tiny_vae_config,
+    tiny_stage1_config,
 ):
     torch.manual_seed(0)
     model = TextVAE(config=tiny_vae_config)
@@ -302,6 +367,7 @@ def test_stage1_pretraining_step_skips_masking_when_lambda_mask_is_zero(
         model,
         optimizer,
         token_ids,
+        stage1_config=tiny_stage1_config,
         lambda_kl=0.0,
         lambda_mask=0.0,
         generator=torch.Generator().manual_seed(1),
@@ -318,7 +384,12 @@ def _make_output(
     logvar: torch.Tensor | None = None,
 ) -> TextVAEOutput:
     if mu is None:
-        mu = torch.zeros(*logits.shape[:2], 2, dtype=logits.dtype)
+        mu = torch.zeros(
+            *logits.shape[:2],
+            2,
+            dtype=logits.dtype,
+            device=logits.device,
+        )
     if logvar is None:
         logvar = torch.zeros_like(mu)
 

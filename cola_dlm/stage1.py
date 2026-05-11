@@ -8,6 +8,7 @@ from numbers import Real
 import torch
 import torch.nn.functional as F
 
+from cola_dlm.config import Stage1Config
 from cola_dlm.vae import TextVAE, TextVAEOutput, vae_logsnr
 
 
@@ -23,6 +24,17 @@ class Stage1VAELoss:
     kl: torch.Tensor
     mask_loss: torch.Tensor
     logsnr: torch.Tensor
+
+    def as_dict(self) -> dict[str, torch.Tensor]:
+        """Return diagnostics with stable public names."""
+
+        return {
+            "loss": self.loss,
+            "reconstruction_nll": self.reconstruction_nll,
+            "kl": self.kl,
+            "mask_loss": self.mask_loss,
+            "logsnr": self.logsnr,
+        }
 
 
 @dataclass(frozen=True)
@@ -81,14 +93,18 @@ def compute_stage1_vae_loss(
     *,
     attention_mask: torch.Tensor | None = None,
     mask_labels: torch.Tensor | None = None,
-    lambda_kl: float = 1.0,
-    lambda_mask: float = 0.0,
+    stage1_config: Stage1Config | None = None,
+    lambda_kl: float | None = None,
+    lambda_mask: float | None = None,
     mask_ignore_index: int = _DEFAULT_MASK_IGNORE_INDEX,
 ) -> Stage1VAELoss:
     """Compute reconstruction and KL loss terms for a TextVAE forward pass."""
 
-    _validate_non_negative_weight("lambda_kl", lambda_kl)
-    _validate_non_negative_weight("lambda_mask", lambda_mask)
+    lambda_kl, lambda_mask = _resolve_stage1_weights(
+        stage1_config=stage1_config,
+        lambda_kl=lambda_kl,
+        lambda_mask=lambda_mask,
+    )
     _validate_ignore_index(mask_ignore_index)
     _validate_loss_shapes(output=output, token_ids=token_ids)
     if attention_mask is not None:
@@ -127,16 +143,20 @@ def stage1_pretraining_step(
     *,
     attention_mask: torch.Tensor | None = None,
     masking_policy: Stage1MaskingPolicy | None = None,
-    lambda_kl: float = 1.0,
-    lambda_mask: float = 0.0,
+    stage1_config: Stage1Config | None = None,
+    lambda_kl: float | None = None,
+    lambda_mask: float | None = None,
     max_grad_norm: float | None = None,
     deterministic: bool = False,
     generator: torch.Generator | None = None,
 ) -> Stage1VAELoss:
     """Run one optimizer step for a tiny Stage 1 TextVAE pretraining batch."""
 
-    _validate_non_negative_weight("lambda_kl", lambda_kl)
-    _validate_non_negative_weight("lambda_mask", lambda_mask)
+    lambda_kl, lambda_mask = _resolve_stage1_weights(
+        stage1_config=stage1_config,
+        lambda_kl=lambda_kl,
+        lambda_mask=lambda_mask,
+    )
     if max_grad_norm is not None:
         _validate_non_negative_weight("max_grad_norm", max_grad_norm)
 
@@ -222,6 +242,36 @@ def _zero_scalar_like(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.new_zeros(())
 
 
+def _resolve_stage1_weights(
+    *,
+    stage1_config: Stage1Config | None,
+    lambda_kl: float | None,
+    lambda_mask: float | None,
+) -> tuple[float, float]:
+    config_kl = None if stage1_config is None else stage1_config.kl_weight
+    config_mask = None if stage1_config is None else stage1_config.mask_loss_weight
+    return (
+        _resolve_stage1_weight("lambda_kl", lambda_kl, config_kl, default=1.0),
+        _resolve_stage1_weight("lambda_mask", lambda_mask, config_mask, default=0.0),
+    )
+
+
+def _resolve_stage1_weight(
+    name: str,
+    explicit_value: float | None,
+    config_value: float | None,
+    *,
+    default: float,
+) -> float:
+    value = explicit_value
+    if value is None:
+        value = config_value
+    if value is None:
+        value = default
+    _validate_non_negative_weight(name, value)
+    return float(value)
+
+
 def _validate_loss_shapes(output: TextVAEOutput, token_ids: torch.Tensor) -> None:
     if output.logits.ndim != 3:
         raise ValueError("output.logits must be shaped [batch, seq, vocab]")
@@ -235,6 +285,14 @@ def _validate_loss_shapes(output: TextVAEOutput, token_ids: torch.Tensor) -> Non
         raise ValueError("output.logits and token_ids must be on the same device")
     if output.kl.device != token_ids.device:
         raise ValueError("output.kl and token_ids must be on the same device")
+    if output.posterior.mu.device != output.logits.device:
+        raise ValueError(
+            "output.posterior.mu and output.logits must be on the same device"
+        )
+    if output.posterior.logvar.device != output.logits.device:
+        raise ValueError(
+            "output.posterior.logvar and output.logits must be on the same device"
+        )
 
 
 def _validate_attention_mask(
