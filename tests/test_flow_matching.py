@@ -1,8 +1,10 @@
 import pytest
 import torch
+import torch.nn.functional as F
 
 from cola_dlm.config import DiffusionConfig
 from cola_dlm.flow_matching import (
+    flow_matching_loss,
     flow_matching_target,
     linear_bridge,
     sample_timestep,
@@ -179,3 +181,70 @@ def test_flow_matching_target_rejects_unsupported_prediction_type():
 
     with pytest.raises(ValueError, match="prediction_type"):
         flow_matching_target(z0, z1, "epsilon")
+
+
+def test_flow_matching_loss_matches_unmasked_mse_loss():
+    prediction = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]])
+    target = torch.tensor([[[0.5, 1.5], [2.0, 6.0]]])
+
+    loss = flow_matching_loss(prediction, target)
+
+    torch.testing.assert_close(loss, F.mse_loss(prediction, target))
+
+
+def test_flow_matching_loss_broadcasts_position_mask_across_latents():
+    prediction = torch.tensor([[[1.0, 2.0], [10.0, 20.0], [3.0, 4.0]]])
+    target = torch.zeros_like(prediction)
+    loss_mask = torch.tensor([[True, False, True]])
+
+    loss = flow_matching_loss(prediction, target, loss_mask)
+
+    expected = torch.tensor((1.0 + 4.0 + 9.0 + 16.0) / 4.0)
+    torch.testing.assert_close(loss, expected)
+
+
+def test_flow_matching_loss_accepts_prediction_shaped_float_mask():
+    prediction = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]])
+    target = torch.zeros_like(prediction)
+    loss_mask = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]])
+
+    loss = flow_matching_loss(prediction, target, loss_mask)
+
+    expected = torch.tensor((1.0 + 16.0) / 2.0)
+    torch.testing.assert_close(loss, expected)
+
+
+def test_flow_matching_loss_returns_finite_zero_for_empty_mask():
+    prediction = torch.ones(1, 2, 3, requires_grad=True)
+    target = torch.zeros_like(prediction)
+    loss_mask = torch.zeros(1, 2, dtype=torch.bool)
+
+    loss = flow_matching_loss(prediction, target, loss_mask)
+
+    assert loss.shape == torch.Size([])
+    assert loss.device == prediction.device
+    assert torch.isfinite(loss)
+    torch.testing.assert_close(loss, torch.tensor(0.0))
+    loss.backward()
+    torch.testing.assert_close(prediction.grad, torch.zeros_like(prediction))
+
+
+def test_flow_matching_loss_rejects_shape_mismatches():
+    prediction = torch.zeros(1, 2, 3)
+    target = torch.zeros(1, 2, 4)
+
+    with pytest.raises(ValueError, match="prediction and target"):
+        flow_matching_loss(prediction, target)
+
+    with pytest.raises(ValueError, match="loss_mask"):
+        flow_matching_loss(prediction, torch.zeros_like(prediction), torch.ones(2, 2))
+
+
+def test_flow_matching_loss_requires_floating_prediction_and_target():
+    prediction = torch.zeros(1, 2, 3)
+
+    with pytest.raises(TypeError, match="target"):
+        flow_matching_loss(prediction, torch.zeros(1, 2, 3, dtype=torch.long))
+
+    with pytest.raises(TypeError, match="loss_mask"):
+        flow_matching_loss(prediction, prediction, torch.ones(1, 2, dtype=torch.long))

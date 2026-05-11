@@ -100,6 +100,68 @@ def flow_matching_target(
     )
 
 
+def flow_matching_loss(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    loss_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    _validate_prediction_target(prediction, target)
+    squared_error = (prediction - target).square()
+    if loss_mask is None:
+        return squared_error.mean()
+
+    mask = _broadcast_loss_mask(loss_mask, prediction).to(
+        device=prediction.device,
+        dtype=squared_error.dtype,
+    )
+    if torch.count_nonzero(mask).item() == 0:
+        return squared_error.sum() * 0.0
+    return (squared_error * mask).sum() / mask.sum()
+
+
+def _validate_prediction_target(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+) -> None:
+    if prediction.shape != target.shape:
+        raise ValueError(
+            "prediction and target must have matching shapes, "
+            f"got {prediction.shape} and {target.shape}"
+        )
+    _validate_floating_tensor(prediction, "prediction")
+    _validate_floating_tensor(target, "target")
+
+
+def _broadcast_loss_mask(
+    loss_mask: torch.Tensor,
+    prediction: torch.Tensor,
+) -> torch.Tensor:
+    if loss_mask.dtype != torch.bool and not loss_mask.dtype.is_floating_point:
+        raise TypeError(
+            "loss_mask must have a boolean or floating point dtype, "
+            f"got {loss_mask.dtype!r}"
+        )
+
+    if loss_mask.ndim < prediction.ndim:
+        prediction_prefix = prediction.shape[: loss_mask.ndim]
+        if all(
+            mask_dim in (1, prediction_dim)
+            for mask_dim, prediction_dim in zip(loss_mask.shape, prediction_prefix)
+        ):
+            loss_mask = loss_mask.reshape(
+                *loss_mask.shape,
+                *([1] * (prediction.ndim - loss_mask.ndim)),
+            )
+
+    try:
+        return torch.broadcast_to(loss_mask, prediction.shape)
+    except RuntimeError as exc:
+        raise ValueError(
+            "loss_mask must be broadcastable to the prediction shape, "
+            f"got {loss_mask.shape} for prediction shape {prediction.shape}"
+        ) from exc
+
+
 def _validate_latent_pair(z0: torch.Tensor, z1: torch.Tensor) -> None:
     if z0.shape != z1.shape:
         raise ValueError(
@@ -237,6 +299,7 @@ def _clamp_open_unit(timestep: torch.Tensor, dtype: torch.dtype) -> torch.Tensor
 
 
 __all__ = (
+    "flow_matching_loss",
     "flow_matching_target",
     "linear_bridge",
     "sample_timestep",
