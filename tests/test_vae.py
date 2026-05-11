@@ -3,7 +3,13 @@ import math
 import pytest
 import torch
 
-from cola_dlm.vae import DiagonalGaussianPosterior, TextVAEEncoder, vae_logsnr
+from cola_dlm.vae import (
+    DiagonalGaussianPosterior,
+    TextVAE,
+    TextVAEDecoder,
+    TextVAEEncoder,
+    vae_logsnr,
+)
 
 
 def test_vae_public_exports_are_core_utilities():
@@ -12,6 +18,9 @@ def test_vae_public_exports_are_core_utilities():
     assert vae.__all__ == (
         "DiagonalGaussianPosterior",
         "TextVAEEncoder",
+        "TextVAEDecoder",
+        "TextVAEOutput",
+        "TextVAE",
         "vae_logsnr",
     )
 
@@ -159,3 +168,39 @@ def test_text_vae_encoder_is_strictly_causal(tiny_vae_config):
         posterior.logvar[:, :3, :],
         changed_posterior.logvar[:, :3, :],
     )
+
+
+def test_text_vae_decoder_returns_token_logits(tiny_vae_config):
+    torch.manual_seed(0)
+    decoder = TextVAEDecoder(config=tiny_vae_config)
+    token_ids = torch.randint(0, tiny_vae_config.vocab_size, (2, 5))
+    latents = torch.randn(2, 5, tiny_vae_config.latent_dim)
+
+    logits = decoder(token_ids, latents)
+
+    assert logits.shape == (2, 5, tiny_vae_config.vocab_size)
+
+
+def test_text_vae_forward_returns_posterior_latents_kl_and_logits(tiny_vae_config):
+    torch.manual_seed(0)
+    model = TextVAE(config=tiny_vae_config)
+    generator = torch.Generator().manual_seed(1)
+    token_ids = torch.randint(0, tiny_vae_config.vocab_size, (2, 6))
+
+    output = model(token_ids, generator=generator)
+
+    assert output.logits.shape == (2, 6, tiny_vae_config.vocab_size)
+    assert output.posterior.mu.shape == (2, 6, tiny_vae_config.latent_dim)
+    assert output.posterior.logvar.shape == (2, 6, tiny_vae_config.latent_dim)
+    assert output.latents.shape == (2, 6, tiny_vae_config.latent_dim)
+    assert output.kl.shape == (2, 6)
+
+
+def test_text_vae_deterministic_mode_uses_posterior_means(tiny_vae_config):
+    torch.manual_seed(0)
+    model = TextVAE(config=tiny_vae_config)
+    token_ids = torch.randint(0, tiny_vae_config.vocab_size, (2, 6))
+
+    output = model(token_ids, deterministic=True)
+
+    assert torch.allclose(output.latents, output.posterior.mu)

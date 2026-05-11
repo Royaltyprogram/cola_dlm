@@ -9,7 +9,7 @@ import torch
 from torch import nn
 
 from cola_dlm.config import VAEConfig
-from cola_dlm.transformer import TokenEmbedding, TransformerStack
+from cola_dlm.transformer import OutputProjection, TokenEmbedding, TransformerStack
 
 
 @dataclass(frozen=True)
@@ -128,7 +128,8 @@ class TextVAEEncoder(nn.Module):
         self.activation = activation if activation is not None else config.activation
         self.use_rope = use_rope if use_rope is not None else config.use_rope
 
-        _validate_text_encoder_config(
+        _validate_text_vae_module_config(
+            module_name="TextVAEEncoder",
             vocab_size=self.vocab_size,
             latent_dim=self.latent_dim,
             patch_size=self.patch_size,
@@ -178,8 +179,181 @@ class TextVAEEncoder(nn.Module):
         return DiagonalGaussianPosterior(mu=mu, logvar=logvar)
 
 
-def _validate_text_encoder_config(
+class TextVAEDecoder(nn.Module):
+    """Causal decoder mapping token ids and per-token latents to logits."""
+
+    def __init__(
+        self,
+        config: VAEConfig | None = None,
+        *,
+        vocab_size: int | None = None,
+        latent_dim: int | None = None,
+        patch_size: int | None = None,
+        num_layers: int | None = None,
+        hidden_size: int | None = None,
+        ffn_size: int | None = None,
+        num_attention_heads: int | None = None,
+        attention_head_dim: int | None = None,
+        dropout: float | None = None,
+        activation: str | None = None,
+        use_rope: bool | None = None,
+    ) -> None:
+        super().__init__()
+        config = config or VAEConfig()
+
+        self.vocab_size = vocab_size if vocab_size is not None else config.vocab_size
+        self.latent_dim = latent_dim if latent_dim is not None else config.latent_dim
+        self.patch_size = patch_size if patch_size is not None else config.patch_size
+        self.hidden_size = hidden_size if hidden_size is not None else config.hidden_size
+        self.num_layers = (
+            num_layers if num_layers is not None else config.decoder_layers
+        )
+        self.ffn_size = ffn_size if ffn_size is not None else config.ffn_size
+        self.num_attention_heads = (
+            num_attention_heads
+            if num_attention_heads is not None
+            else config.num_attention_heads
+        )
+        if attention_head_dim is not None:
+            self.attention_head_dim = attention_head_dim
+        elif hidden_size is not None or num_attention_heads is not None:
+            self.attention_head_dim = (
+                self.hidden_size // self.num_attention_heads
+                if self.num_attention_heads > 0
+                else config.attention_head_dim
+            )
+        else:
+            self.attention_head_dim = config.attention_head_dim
+        self.dropout = dropout if dropout is not None else config.dropout
+        self.activation = activation if activation is not None else config.activation
+        self.use_rope = use_rope if use_rope is not None else config.use_rope
+
+        _validate_text_vae_module_config(
+            module_name="TextVAEDecoder",
+            vocab_size=self.vocab_size,
+            latent_dim=self.latent_dim,
+            patch_size=self.patch_size,
+            num_layers=self.num_layers,
+            hidden_size=self.hidden_size,
+            ffn_size=self.ffn_size,
+            num_attention_heads=self.num_attention_heads,
+            attention_head_dim=self.attention_head_dim,
+            dropout=self.dropout,
+            activation=self.activation,
+            use_rope=self.use_rope,
+        )
+
+        self.token_embedding = TokenEmbedding(
+            vocab_size=self.vocab_size,
+            hidden_size=self.hidden_size,
+        )
+        self.latent_projection = nn.Linear(self.latent_dim, self.hidden_size)
+        self.transformer = TransformerStack(
+            num_layers=self.num_layers,
+            hidden_size=self.hidden_size,
+            num_heads=self.num_attention_heads,
+            ffn_size=self.ffn_size,
+            head_dim=self.attention_head_dim,
+            dropout=self.dropout,
+            activation=self.activation,
+            use_rope=self.use_rope,
+        )
+        self.output_projection = OutputProjection(
+            hidden_size=self.hidden_size,
+            vocab_size=self.vocab_size,
+        )
+
+    def forward(
+        self,
+        token_ids: torch.Tensor,
+        latents: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Map [batch, seq] token ids and [batch, seq, latent] latents to logits."""
+
+        _validate_decoder_inputs(
+            token_ids=token_ids,
+            latents=latents,
+            latent_dim=self.latent_dim,
+        )
+
+        hidden_states = self.token_embedding(token_ids)
+        hidden_states = hidden_states + self.latent_projection(latents)
+        hidden_states = self.transformer(
+            hidden_states,
+            attention_mask=attention_mask,
+            causal=True,
+        )
+        return self.output_projection(hidden_states)
+
+
+@dataclass(frozen=True)
+class TextVAEOutput:
+    """Tiny VAE forward output with per-token latent tensors."""
+
+    logits: torch.Tensor
+    posterior: DiagonalGaussianPosterior
+    latents: torch.Tensor
+    kl: torch.Tensor
+
+
+class TextVAE(nn.Module):
+    """Small causal text VAE wrapper used by acceptance tests and later training."""
+
+    def __init__(self, config: VAEConfig | None = None) -> None:
+        super().__init__()
+        config = config or VAEConfig()
+        self.encoder = TextVAEEncoder(config=config)
+        self.decoder = TextVAEDecoder(config=config)
+
+    def forward(
+        self,
+        token_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        *,
+        deterministic: bool = False,
+        generator: torch.Generator | None = None,
+        mask_loss_positions: torch.Tensor | None = None,
+    ) -> TextVAEOutput:
+        posterior = self.encoder(token_ids, attention_mask=attention_mask)
+        latents = (
+            posterior.mode()
+            if deterministic
+            else posterior.sample(generator=generator)
+        )
+        decoder_tokens = self.prepare_decoder_tokens(
+            token_ids,
+            mask_loss_positions=mask_loss_positions,
+        )
+        logits = self.decoder(
+            decoder_tokens,
+            latents,
+            attention_mask=attention_mask,
+        )
+        return TextVAEOutput(
+            logits=logits,
+            posterior=posterior,
+            latents=latents,
+            kl=posterior.kl(),
+        )
+
+    def prepare_decoder_tokens(
+        self,
+        token_ids: torch.Tensor,
+        *,
+        mask_loss_positions: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if (
+            mask_loss_positions is not None
+            and mask_loss_positions.shape != token_ids.shape
+        ):
+            raise ValueError("mask_loss_positions must match token_ids shape")
+        return token_ids
+
+
+def _validate_text_vae_module_config(
     *,
+    module_name: str,
     vocab_size: int,
     latent_dim: int,
     patch_size: int,
@@ -199,7 +373,7 @@ def _validate_text_encoder_config(
     if patch_size <= 0:
         raise ValueError(f"patch_size must be positive, got {patch_size!r}")
     if patch_size != 1:
-        raise NotImplementedError("TextVAEEncoder only supports patch_size=1")
+        raise NotImplementedError(f"{module_name} only supports patch_size=1")
     if num_layers <= 0:
         raise ValueError(f"num_layers must be positive, got {num_layers!r}")
     if hidden_size <= 0:
@@ -226,6 +400,29 @@ def _validate_text_encoder_config(
         raise ValueError("attention_head_dim must be even when use_rope=True")
 
 
+def _validate_decoder_inputs(
+    *,
+    token_ids: torch.Tensor,
+    latents: torch.Tensor,
+    latent_dim: int,
+) -> None:
+    if token_ids.ndim != 2:
+        raise ValueError("token_ids must be shaped [batch, seq]")
+    if latents.ndim != 3:
+        raise ValueError("latents must be shaped [batch, seq, latent_dim]")
+    if token_ids.device != latents.device:
+        raise ValueError("token_ids and latents must be on the same device")
+    if not latents.is_floating_point():
+        raise ValueError("latents must be a floating point tensor")
+    if latents.shape[:2] != token_ids.shape:
+        raise ValueError("token_ids and latents must share batch and seq dimensions")
+    if latents.shape[-1] != latent_dim:
+        raise ValueError(
+            f"latents final dimension must equal latent_dim={latent_dim}, "
+            f"got {latents.shape[-1]}"
+        )
+
+
 def _validate_matching_floating_tensors(
     left: torch.Tensor,
     right: torch.Tensor,
@@ -250,5 +447,8 @@ def _validate_matching_floating_tensors(
 __all__ = (
     "DiagonalGaussianPosterior",
     "TextVAEEncoder",
+    "TextVAEDecoder",
+    "TextVAEOutput",
+    "TextVAE",
     "vae_logsnr",
 )
