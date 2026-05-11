@@ -1,15 +1,18 @@
-from dataclasses import FrozenInstanceError, fields
+from dataclasses import FrozenInstanceError, fields, replace
 
 import pytest
 import torch
 
 from cola_dlm.config import InferenceConfig
+from cola_dlm.dit import BlockCausalTextDiT
 from cola_dlm.inference import (
     GenerationBlock,
     InferenceOutput,
     apply_clean_condition_repaint,
+    combine_cfg_vector_fields,
     encode_prefix_latents,
     iter_generation_blocks,
+    sample_latent_blocks,
 )
 from cola_dlm.vae import TextVAE
 
@@ -21,8 +24,10 @@ def test_inference_public_surface():
         "GenerationBlock",
         "InferenceOutput",
         "apply_clean_condition_repaint",
+        "combine_cfg_vector_fields",
         "encode_prefix_latents",
         "iter_generation_blocks",
+        "sample_latent_blocks",
     )
 
 
@@ -287,3 +292,234 @@ def test_apply_clean_condition_repaint_repeatedly_restores_known_positions():
         clean_block_latents[:, known_mask, :],
     )
     assert torch.equal(restored[:, ~known_mask, :], drifted[:, ~known_mask, :])
+
+
+def test_denoise_inference_block_repaints_known_positions_exactly(
+    tiny_inference_config,
+):
+    import cola_dlm.inference as inference
+
+    dit = _ConstantDiT(tiny_inference_config.dit, value=1.0)
+    config = replace(tiny_inference_config, num_denoise_steps=2, cfg_scale=1.0)
+    prefix_latents = torch.arange(12, dtype=torch.float32).view(1, 3, 4)
+    clean_history = prefix_latents[:, :0]
+    block_latents = torch.randn(
+        1,
+        4,
+        4,
+        generator=torch.Generator().manual_seed(17),
+    )
+    initial_unknown = block_latents[:, 3:].clone()
+    clean_block_latents = torch.zeros_like(block_latents)
+    clean_block_latents[:, :3] = prefix_latents
+    known_mask = torch.tensor([True, True, True, False])
+
+    denoised = inference._denoise_inference_block(
+        dit=dit,
+        clean_history_latents=clean_history,
+        block_latents=block_latents,
+        block_start=0,
+        known_mask=known_mask,
+        clean_block_latents=clean_block_latents,
+        config=config,
+        cfg_scale=1.0,
+        block_size=4,
+    )
+
+    torch.testing.assert_close(denoised[:, :3], prefix_latents)
+    torch.testing.assert_close(denoised[:, 3:], initial_unknown - 1.0)
+
+
+def test_pack_inference_block_uses_absolute_blocks_and_segments():
+    import cola_dlm.inference as inference
+
+    clean_history = torch.zeros(1, 6, 2)
+    block_latents = torch.ones(1, 2, 2)
+
+    packed = inference._pack_inference_block(
+        clean_history,
+        block_latents,
+        block_start=6,
+        block_size=2,
+    )
+
+    assert packed.block_ids.tolist() == [0, 0, 1, 1, 2, 2, 3, 3]
+    assert packed.segment_ids.tolist() == [0, 0, 0, 0, 0, 0, 1, 1]
+    assert packed.current_slice == slice(6, 8)
+    torch.testing.assert_close(packed.latents[:, :6], clean_history)
+    torch.testing.assert_close(packed.latents[:, 6:], block_latents)
+
+
+def test_initial_block_latents_samples_only_unknown_positions():
+    import cola_dlm.inference as inference
+
+    prefix_latents = torch.arange(12, dtype=torch.float32).view(1, 3, 4)
+    block = GenerationBlock(
+        start=0,
+        end=4,
+        known_mask=torch.tensor([True, True, True, False]),
+    )
+
+    latents = inference._initial_block_latents(
+        prefix_latents,
+        block,
+        block.known_mask,
+        generator=torch.Generator().manual_seed(41),
+    )
+    expected_unknown = torch.randn(
+        1,
+        1,
+        4,
+        generator=torch.Generator().manual_seed(41),
+    )
+
+    torch.testing.assert_close(latents[:, :3], prefix_latents)
+    torch.testing.assert_close(latents[:, 3:], expected_unknown)
+
+
+def test_sample_latent_blocks_num_denoise_steps_controls_update_count(
+    tiny_inference_config,
+):
+    dit = _ConstantDiT(tiny_inference_config.dit, value=1.0)
+    config = replace(tiny_inference_config, num_denoise_steps=3, cfg_scale=1.0)
+    prefix_latents = torch.zeros(1, 4, tiny_inference_config.dit.latent_dim)
+
+    generated = sample_latent_blocks(
+        dit,
+        prefix_latents,
+        inference_config=config,
+        num_new_latents=2,
+        generator=torch.Generator().manual_seed(23),
+    )
+
+    assert generated.shape == (1, 2, tiny_inference_config.dit.latent_dim)
+    assert dit.call_count == 3
+
+
+def test_sample_latent_blocks_block_size_controls_generation_blocks(
+    tiny_inference_config,
+):
+    prefix_latents = torch.zeros(1, 1, tiny_inference_config.dit.latent_dim)
+    config = replace(tiny_inference_config, num_denoise_steps=1, cfg_scale=1.0)
+
+    dit_for_size_four = _ConstantDiT(tiny_inference_config.dit, value=0.0)
+    sample_latent_blocks(
+        dit_for_size_four,
+        prefix_latents,
+        inference_config=config,
+        num_new_latents=7,
+        block_size=4,
+        generator=torch.Generator().manual_seed(29),
+    )
+
+    dit_for_size_two = _ConstantDiT(tiny_inference_config.dit, value=0.0)
+    sample_latent_blocks(
+        dit_for_size_two,
+        prefix_latents,
+        inference_config=config,
+        num_new_latents=7,
+        block_size=2,
+        generator=torch.Generator().manual_seed(29),
+    )
+
+    assert dit_for_size_four.call_count == 2
+    assert dit_for_size_two.call_count == 4
+
+
+def test_sample_latent_blocks_cfg_scale_one_skips_unconditional_branch(
+    tiny_inference_config,
+):
+    dit = _ConstantDiT(tiny_inference_config.dit, value=2.0)
+    config = replace(tiny_inference_config, num_denoise_steps=2, cfg_scale=1.0)
+    prefix_latents = torch.zeros(1, 4, tiny_inference_config.dit.latent_dim)
+    unconditional_prefix_latents = prefix_latents + 10.0
+
+    generated = sample_latent_blocks(
+        dit,
+        prefix_latents,
+        inference_config=config,
+        num_new_latents=1,
+        unconditional_prefix_latents=unconditional_prefix_latents,
+        generator=torch.Generator().manual_seed(31),
+    )
+    expected_noise = torch.randn(
+        1,
+        1,
+        tiny_inference_config.dit.latent_dim,
+        generator=torch.Generator().manual_seed(31),
+    )
+
+    assert dit.call_count == 2
+    torch.testing.assert_close(generated, expected_noise - 2.0)
+
+
+@pytest.mark.parametrize(
+    ("cfg_scale", "expected"),
+    [
+        (0.0, 1.0),
+        (1.0, 3.0),
+        (2.5, 6.0),
+    ],
+)
+def test_combine_cfg_vector_fields_uses_expected_linear_combination(
+    cfg_scale,
+    expected,
+):
+    unconditional = torch.ones(2, 3, 4)
+    conditional = unconditional + 2.0
+
+    guided = combine_cfg_vector_fields(unconditional, conditional, cfg_scale)
+
+    torch.testing.assert_close(guided, torch.full_like(guided, expected))
+
+
+@pytest.mark.parametrize("sampler", ["euler", "heun"])
+def test_sample_latent_blocks_euler_and_heun_return_finite_tiny_latents(
+    tiny_inference_config,
+    sampler,
+):
+    torch.manual_seed(0)
+    dit = BlockCausalTextDiT(tiny_inference_config.dit)
+    dit.eval()
+    config = replace(
+        tiny_inference_config,
+        sampler=sampler,
+        num_denoise_steps=1,
+        cfg_scale=1.0,
+    )
+    prefix_latents = torch.randn(2, 3, tiny_inference_config.dit.latent_dim)
+
+    with torch.no_grad():
+        generated = sample_latent_blocks(
+            dit,
+            prefix_latents,
+            inference_config=config,
+            num_new_latents=2,
+            generator=torch.Generator().manual_seed(37),
+        )
+
+    assert generated.shape == (2, 2, tiny_inference_config.dit.latent_dim)
+    assert torch.isfinite(generated).all()
+
+
+class _ConstantDiT:
+    def __init__(self, config, *, value: float) -> None:
+        self.config = config
+        self.value = value
+        self.call_count = 0
+
+    def __call__(
+        self,
+        packed_latents,
+        timesteps,
+        attention_mask,
+        segment_ids,
+    ):
+        self.call_count += 1
+        assert timesteps.shape == (packed_latents.shape[0],)
+        assert attention_mask.shape == (
+            packed_latents.shape[1],
+            packed_latents.shape[1],
+        )
+        assert segment_ids.shape == (packed_latents.shape[1],)
+        return torch.full_like(packed_latents, self.value)
