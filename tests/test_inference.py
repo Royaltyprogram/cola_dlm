@@ -11,6 +11,7 @@ from cola_dlm.inference import (
     apply_clean_condition_repaint,
     combine_cfg_vector_fields,
     encode_prefix_latents,
+    generate,
     iter_generation_blocks,
     sample_latent_blocks,
 )
@@ -26,6 +27,7 @@ def test_inference_public_surface():
         "apply_clean_condition_repaint",
         "combine_cfg_vector_fields",
         "encode_prefix_latents",
+        "generate",
         "iter_generation_blocks",
         "sample_latent_blocks",
     )
@@ -500,6 +502,129 @@ def test_sample_latent_blocks_euler_and_heun_return_finite_tiny_latents(
 
     assert generated.shape == (2, 2, tiny_inference_config.dit.latent_dim)
     assert torch.isfinite(generated).all()
+
+
+def test_generate_returns_decoded_response_shapes(tiny_inference_config):
+    torch.manual_seed(0)
+    vae = TextVAE(tiny_inference_config.vae)
+    dit = BlockCausalTextDiT(tiny_inference_config.dit)
+    vae.eval()
+    dit.eval()
+    prefix_token_ids = torch.randint(tiny_inference_config.vae.vocab_size, (2, 5))
+
+    with torch.no_grad():
+        output = generate(
+            vae,
+            dit,
+            prefix_token_ids,
+            inference_config=tiny_inference_config,
+            max_new_tokens=3,
+            generator=torch.Generator().manual_seed(43),
+        )
+
+    assert output.generated_latents.shape == (
+        2,
+        3,
+        tiny_inference_config.vae.latent_dim,
+    )
+    assert output.all_latents.shape[1] == prefix_token_ids.shape[1] + 3
+    assert output.response_logits.shape == (
+        2,
+        3,
+        tiny_inference_config.vae.vocab_size,
+    )
+    assert output.response_token_ids.shape == (2, 3)
+    assert output.kv_cache is None
+
+
+def test_generate_call_time_max_new_tokens_overrides_config(
+    tiny_inference_config,
+):
+    torch.manual_seed(0)
+    vae = TextVAE(tiny_inference_config.vae)
+    dit = BlockCausalTextDiT(tiny_inference_config.dit)
+    vae.eval()
+    dit.eval()
+    config = replace(
+        tiny_inference_config,
+        max_new_tokens=1,
+        num_denoise_steps=1,
+    )
+    prefix_token_ids = torch.randint(config.vae.vocab_size, (1, 4))
+
+    with torch.no_grad():
+        output = generate(
+            vae,
+            dit,
+            prefix_token_ids,
+            inference_config=config,
+            max_new_tokens=3,
+            generator=torch.Generator().manual_seed(47),
+        )
+
+    assert output.generated_latents.shape[1] == 3
+    assert output.response_logits.shape[1] == 3
+    assert output.response_token_ids.shape == (1, 3)
+
+
+def test_generate_rejects_kv_cache(tiny_inference_config):
+    vae = TextVAE(tiny_inference_config.vae)
+    dit = BlockCausalTextDiT(tiny_inference_config.dit)
+    prefix_token_ids = torch.randint(tiny_inference_config.vae.vocab_size, (1, 4))
+
+    with pytest.raises(ValueError, match="kv_cache is not supported yet"):
+        generate(
+            vae,
+            dit,
+            prefix_token_ids,
+            inference_config=tiny_inference_config,
+            kv_cache=object(),
+        )
+
+
+def test_generate_rejects_unsupported_condition_strategy(tiny_inference_config):
+    vae = TextVAE(tiny_inference_config.vae)
+    dit = BlockCausalTextDiT(tiny_inference_config.dit)
+    config = replace(tiny_inference_config, condition_strategy="left_pad")
+    prefix_token_ids = torch.randint(config.vae.vocab_size, (1, 4))
+
+    with pytest.raises(ValueError, match="only supports 'clean_condition_repaint'"):
+        generate(
+            vae,
+            dit,
+            prefix_token_ids,
+            inference_config=config,
+            max_new_tokens=1,
+        )
+
+
+def test_generate_preserves_unaligned_prefix_latents(tiny_inference_config):
+    torch.manual_seed(0)
+    vae = TextVAE(tiny_inference_config.vae)
+    dit = BlockCausalTextDiT(tiny_inference_config.dit)
+    vae.eval()
+    dit.eval()
+    config = replace(
+        tiny_inference_config,
+        max_new_tokens=2,
+        num_denoise_steps=1,
+    )
+    prefix_token_ids = torch.randint(config.vae.vocab_size, (1, 3))
+
+    with torch.no_grad():
+        output = generate(
+            vae,
+            dit,
+            prefix_token_ids,
+            inference_config=config,
+            generator=torch.Generator().manual_seed(53),
+        )
+
+    torch.testing.assert_close(
+        output.all_latents[:, : prefix_token_ids.shape[1], :],
+        output.prefix_latents,
+    )
+    assert output.generated_latents.shape[1] == 2
 
 
 class _ConstantDiT:

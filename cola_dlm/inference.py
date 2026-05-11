@@ -83,6 +83,96 @@ def encode_prefix_latents(
     return posterior.sample(generator=generator)
 
 
+def generate(
+    vae: TextVAE,
+    dit: BlockCausalTextDiT,
+    prefix_token_ids: torch.Tensor,
+    *,
+    inference_config: InferenceConfig | None = None,
+    max_new_tokens: int | None = None,
+    attention_mask: torch.Tensor | None = None,
+    unconditional_prefix_token_ids: torch.Tensor | None = None,
+    generator: torch.Generator | None = None,
+    decoder_fill_token_id: int = 0,
+    kv_cache: None = None,
+) -> InferenceOutput:
+    """Generate response latents and decode greedy response token ids."""
+
+    _reject_kv_cache(kv_cache)
+    config = inference_config if inference_config is not None else InferenceConfig()
+    max_new_tokens = _resolve_positive_int(
+        "max_new_tokens",
+        max_new_tokens,
+        config.max_new_tokens,
+    )
+    cfg_scale = _resolve_non_negative_float("cfg_scale", None, config.cfg_scale)
+    _validate_clean_condition_strategy(config.condition_strategy)
+    _validate_prefix_token_ids(prefix_token_ids)
+    if attention_mask is not None:
+        _validate_prefix_attention_mask(attention_mask, prefix_token_ids)
+    _validate_generation_fits_dit(
+        prefix_length=prefix_token_ids.shape[1],
+        num_new_latents=max_new_tokens,
+        sequence_length=config.dit.sequence_length,
+    )
+
+    prefix_latents = encode_prefix_latents(
+        vae,
+        prefix_token_ids,
+        attention_mask=attention_mask,
+        generator=generator,
+    )
+    unconditional_prefix_latents = None
+    if unconditional_prefix_token_ids is not None and cfg_scale != 1.0:
+        _validate_unconditional_prefix_token_ids(
+            unconditional_prefix_token_ids,
+            prefix_token_ids,
+        )
+        unconditional_prefix_latents = encode_prefix_latents(
+            vae,
+            unconditional_prefix_token_ids,
+            attention_mask=attention_mask,
+            generator=generator,
+        )
+
+    generated_latents = sample_latent_blocks(
+        dit,
+        prefix_latents,
+        inference_config=config,
+        num_new_latents=max_new_tokens,
+        unconditional_prefix_latents=unconditional_prefix_latents,
+        generator=generator,
+        cfg_scale=cfg_scale,
+    )
+    all_latents = torch.cat((prefix_latents, generated_latents), dim=1)
+    decoder_token_ids = _build_decoder_token_ids(
+        prefix_token_ids,
+        num_generated_tokens=max_new_tokens,
+        fill_token_id=decoder_fill_token_id,
+        vocab_size=vae.decoder.vocab_size,
+    )
+    decoder_attention_mask = _build_decoder_attention_mask(
+        attention_mask,
+        num_generated_tokens=max_new_tokens,
+    )
+    logits = vae.decoder(
+        decoder_token_ids,
+        all_latents,
+        attention_mask=decoder_attention_mask,
+    )
+    response_logits = logits[:, prefix_token_ids.shape[1] :, :]
+    response_token_ids = response_logits.argmax(dim=-1)
+
+    return InferenceOutput(
+        prefix_latents=prefix_latents,
+        generated_latents=generated_latents,
+        all_latents=all_latents,
+        response_logits=response_logits,
+        response_token_ids=response_token_ids,
+        kv_cache=None,
+    )
+
+
 def sample_latent_blocks(
     dit: BlockCausalTextDiT,
     prefix_latents: torch.Tensor,
@@ -592,6 +682,64 @@ def _validate_prefix_attention_mask(
         )
 
 
+def _validate_unconditional_prefix_token_ids(
+    unconditional_prefix_token_ids: torch.Tensor,
+    prefix_token_ids: torch.Tensor,
+) -> None:
+    _validate_prefix_token_ids(unconditional_prefix_token_ids)
+    if unconditional_prefix_token_ids.shape != prefix_token_ids.shape:
+        raise ValueError(
+            "unconditional_prefix_token_ids must match prefix_token_ids shape"
+        )
+    if unconditional_prefix_token_ids.device != prefix_token_ids.device:
+        raise ValueError(
+            "unconditional_prefix_token_ids must be on the same device as "
+            "prefix_token_ids"
+        )
+
+
+def _build_decoder_token_ids(
+    prefix_token_ids: torch.Tensor,
+    *,
+    num_generated_tokens: int,
+    fill_token_id: int,
+    vocab_size: int,
+) -> torch.Tensor:
+    _validate_decoder_fill_token_id(fill_token_id, vocab_size)
+    generated_token_ids = torch.full(
+        (prefix_token_ids.shape[0], num_generated_tokens),
+        fill_token_id,
+        dtype=prefix_token_ids.dtype,
+        device=prefix_token_ids.device,
+    )
+    return torch.cat((prefix_token_ids, generated_token_ids), dim=1)
+
+
+def _build_decoder_attention_mask(
+    attention_mask: torch.Tensor | None,
+    *,
+    num_generated_tokens: int,
+) -> torch.Tensor | None:
+    if attention_mask is None:
+        return None
+
+    generated_mask = torch.ones(
+        (attention_mask.shape[0], num_generated_tokens),
+        dtype=torch.bool,
+        device=attention_mask.device,
+    )
+    return _token_attention_to_transformer_mask(
+        torch.cat((attention_mask, generated_mask), dim=1)
+    )
+
+
+def _validate_decoder_fill_token_id(fill_token_id: int, vocab_size: int) -> None:
+    if isinstance(fill_token_id, bool) or not isinstance(fill_token_id, int):
+        raise TypeError("decoder_fill_token_id must be an integer")
+    if fill_token_id < 0 or fill_token_id >= vocab_size:
+        raise ValueError("decoder_fill_token_id must be inside the decoder vocabulary")
+
+
 def _validate_clean_condition_strategy(condition_strategy: str) -> None:
     if condition_strategy != "clean_condition_repaint":
         raise ValueError(
@@ -775,6 +923,7 @@ __all__ = (
     "apply_clean_condition_repaint",
     "combine_cfg_vector_fields",
     "encode_prefix_latents",
+    "generate",
     "iter_generation_blocks",
     "sample_latent_blocks",
 )
