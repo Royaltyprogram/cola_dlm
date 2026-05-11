@@ -1,0 +1,49 @@
+{
+  "description": "Tiny CPU-oriented Stage 2 VAE-DiT recipe for smoke tests.",
+  "data_files": [],
+  "output_dir": "runs/stage2_tiny_debug",
+  "max_steps": 2,
+  "checkpoint_every": 1,
+  "log_every": 1,
+  "batch_size": 2,
+  "seed": 0,
+  "device": "cpu",
+  "config": {
+    "vae": {
+      "tokenizer_name": "tiny",
+      "vocab_size": 128,
+      "sequence_length": 16,
+      "latent_dim": 4,
+      "patch_size": 1,
+      "encoder_layers": 1,
+      "decoder_layers": 1,
+      "hidden_size": 32,
+      "ffn_size": 64,
+      "num_attention_heads": 4,
+      "attention_head_dim": 8
+    },
+    "dit": {
+      "sequence_length": 16,
+      "latent_dim": 4,
+      "block_size": 4,
+      "num_layers": 2,
+      "hidden_size": 32,
+      "ffn_size": 64,
+      "num_attention_heads": 4,
+      "attention_head_dim": 8
+    },
+    "diffusion": {
+      "logit_normal_loc": 0.0,
+      "logit_normal_scale": 0.5
+    },
+    "optimizer": {
+      "peak_lr": 0.0001,
+      "warmup_steps": 2
+    },
+    "global_batch_size": 2,
+    "tokens_per_step": 32,
+    "vae_loss_weight": 0.3,
+    "flow_matching_loss_weight": 0.4,
+    "reference_kl_weight": 0.5
+  }
+}

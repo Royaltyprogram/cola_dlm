@@ -1,0 +1,18 @@
+# Config Recipes
+
+Recipe files are JSON so they can be loaded with the Python standard library.
+Each recipe stores the typed model config under `config`. Other top-level keys
+are preserved as run metadata for later CLI entrypoints.
+
+```python
+from cola_dlm.config import Stage1Config
+from cola_dlm.config_io import load_config
+
+loaded = load_config("configs/stage1_tiny_debug.json", Stage1Config)
+stage1_config = loaded.config
+run_metadata = loaded.metadata
+```
+
+The tiny-debug recipes use the same small dimensions as the pytest fixtures and
+set only a couple of local training steps. The paper recipes mirror the current
+dataclass defaults in `cola_dlm/config.py`.

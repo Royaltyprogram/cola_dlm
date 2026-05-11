@@ -1,0 +1,39 @@
+{
+  "description": "Tiny inference recipe for sampler smoke tests.",
+  "prompt_token_ids": [1, 2, 3, 4],
+  "output": "runs/inference_tiny_debug/samples.jsonl",
+  "seed": 0,
+  "device": "cpu",
+  "config": {
+    "vae": {
+      "tokenizer_name": "tiny",
+      "vocab_size": 128,
+      "sequence_length": 16,
+      "latent_dim": 4,
+      "patch_size": 1,
+      "encoder_layers": 1,
+      "decoder_layers": 1,
+      "hidden_size": 32,
+      "ffn_size": 64,
+      "num_attention_heads": 4,
+      "attention_head_dim": 8
+    },
+    "dit": {
+      "sequence_length": 16,
+      "latent_dim": 4,
+      "block_size": 4,
+      "num_layers": 2,
+      "hidden_size": 32,
+      "ffn_size": 64,
+      "num_attention_heads": 4,
+      "attention_head_dim": 8
+    },
+    "diffusion": {
+      "logit_normal_loc": 0.0,
+      "logit_normal_scale": 0.5
+    },
+    "num_denoise_steps": 2,
+    "cfg_scale": 1.0,
+    "max_new_tokens": 4
+  }
+}
