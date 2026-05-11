@@ -62,6 +62,77 @@ def sample_timestep(
     return (indices.to(sample_dtype) + 0.5) / discrete_grid_size
 
 
+def linear_bridge(
+    z0: torch.Tensor,
+    z1: torch.Tensor,
+    timestep: torch.Tensor,
+) -> torch.Tensor:
+    """Interpolate clean latents ``z0`` toward base-noise latents ``z1``."""
+
+    _validate_latent_pair(z0, z1)
+    timestep = _broadcast_timestep(timestep, z0)
+    return (1 - timestep) * z0 + timestep * z1
+
+
+def velocity_target(z0: torch.Tensor, z1: torch.Tensor) -> torch.Tensor:
+    _validate_latent_pair(z0, z1)
+    return z1 - z0
+
+
+def x0_target(z0: torch.Tensor) -> torch.Tensor:
+    _validate_floating_tensor(z0, "z0")
+    return z0
+
+
+def flow_matching_target(
+    z0: torch.Tensor,
+    z1: torch.Tensor,
+    prediction_type: str,
+) -> torch.Tensor:
+    if prediction_type == "velocity":
+        return velocity_target(z0, z1)
+    if prediction_type == "x0":
+        _validate_latent_pair(z0, z1)
+        return x0_target(z0)
+    raise ValueError(
+        "prediction_type must be 'velocity' or 'x0', "
+        f"got {prediction_type!r}"
+    )
+
+
+def _validate_latent_pair(z0: torch.Tensor, z1: torch.Tensor) -> None:
+    if z0.shape != z1.shape:
+        raise ValueError(
+            "z0 and z1 must have matching shapes, "
+            f"got {z0.shape} and {z1.shape}"
+        )
+    _validate_floating_tensor(z0, "z0")
+    _validate_floating_tensor(z1, "z1")
+
+
+def _validate_floating_tensor(tensor: torch.Tensor, name: str) -> None:
+    if not tensor.dtype.is_floating_point:
+        raise TypeError(
+            f"{name} must have a floating point dtype, got {tensor.dtype!r}"
+        )
+
+
+def _broadcast_timestep(timestep: torch.Tensor, latent: torch.Tensor) -> torch.Tensor:
+    _validate_floating_tensor(timestep, "timestep")
+    if timestep.ndim < latent.ndim and timestep.shape[:1] == latent.shape[:1]:
+        timestep = timestep.reshape(
+            *timestep.shape,
+            *([1] * (latent.ndim - timestep.ndim)),
+        )
+    try:
+        return torch.broadcast_to(timestep, latent.shape)
+    except RuntimeError as exc:
+        raise ValueError(
+            "timestep must be broadcastable to the latent shape, "
+            f"got {timestep.shape} for latent shape {latent.shape}"
+        ) from exc
+
+
 def _normalize_sample_shape(
     shape: int | Sequence[int] | torch.Size | None,
     batch_size: int | None,
@@ -165,4 +236,10 @@ def _clamp_open_unit(timestep: torch.Tensor, dtype: torch.dtype) -> torch.Tensor
     return timestep.clamp(min=eps, max=1.0 - eps)
 
 
-__all__ = ("sample_timestep",)
+__all__ = (
+    "flow_matching_target",
+    "linear_bridge",
+    "sample_timestep",
+    "velocity_target",
+    "x0_target",
+)

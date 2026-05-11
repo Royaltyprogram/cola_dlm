@@ -2,7 +2,13 @@ import pytest
 import torch
 
 from cola_dlm.config import DiffusionConfig
-from cola_dlm.flow_matching import sample_timestep
+from cola_dlm.flow_matching import (
+    flow_matching_target,
+    linear_bridge,
+    sample_timestep,
+    velocity_target,
+    x0_target,
+)
 
 
 def test_uniform_timestep_samples_have_requested_shape_and_open_range():
@@ -101,3 +107,75 @@ def test_sample_timestep_rejects_invalid_inputs():
     config = DiffusionConfig(timestep_schedule="logit_normal", logit_normal_scale=0.0)
     with pytest.raises(ValueError, match="logit_normal_scale must be positive"):
         sample_timestep(config, 2)
+
+
+def test_linear_bridge_preserves_latent_shape():
+    z0 = torch.zeros(2, 3, 4)
+    z1 = torch.ones(2, 3, 4)
+    timesteps = torch.tensor([0.25, 0.75])
+
+    bridged = linear_bridge(z0, z1, timesteps)
+
+    assert bridged.shape == z0.shape
+
+
+def test_linear_bridge_matches_endpoints():
+    z0 = torch.tensor(
+        [
+            [[1.0, 2.0], [3.0, 4.0]],
+            [[5.0, 6.0], [7.0, 8.0]],
+        ]
+    )
+    z1 = torch.tensor(
+        [
+            [[10.0, 20.0], [30.0, 40.0]],
+            [[50.0, 60.0], [70.0, 80.0]],
+        ]
+    )
+
+    torch.testing.assert_close(linear_bridge(z0, z1, torch.zeros(2)), z0)
+    torch.testing.assert_close(linear_bridge(z0, z1, torch.ones(2, 1)), z1)
+
+
+def test_linear_bridge_matches_midpoint_formula():
+    z0 = torch.tensor([[[0.0, 2.0], [4.0, 6.0]]])
+    z1 = torch.tensor([[[2.0, 4.0], [8.0, 10.0]]])
+
+    bridged = linear_bridge(z0, z1, torch.tensor([0.5]))
+
+    expected = torch.tensor([[[1.0, 3.0], [6.0, 8.0]]])
+    torch.testing.assert_close(bridged, expected)
+
+
+def test_velocity_target_matches_latent_difference():
+    z0 = torch.tensor([[[1.0, -1.0], [3.0, 4.0]]])
+    z1 = torch.tensor([[[2.5, 0.0], [-1.0, 10.0]]])
+
+    target = velocity_target(z0, z1)
+
+    torch.testing.assert_close(target, z1 - z0)
+
+
+def test_flow_matching_target_selects_velocity_target():
+    z0 = torch.tensor([[[1.0, 2.0]]])
+    z1 = torch.tensor([[[4.0, 6.0]]])
+
+    target = flow_matching_target(z0, z1, "velocity")
+
+    torch.testing.assert_close(target, z1 - z0)
+
+
+def test_x0_prediction_type_returns_clean_latent_target():
+    z0 = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]])
+    z1 = torch.tensor([[[5.0, 6.0], [7.0, 8.0]]])
+
+    torch.testing.assert_close(x0_target(z0), z0)
+    torch.testing.assert_close(flow_matching_target(z0, z1, "x0"), z0)
+
+
+def test_flow_matching_target_rejects_unsupported_prediction_type():
+    z0 = torch.zeros(1, 2, 3)
+    z1 = torch.ones(1, 2, 3)
+
+    with pytest.raises(ValueError, match="prediction_type"):
+        flow_matching_target(z0, z1, "epsilon")
