@@ -7,6 +7,10 @@ from cola_dlm.block_causal_mask import (
     NOISY_SEGMENT_ID,
     build_packed_dit_inputs,
 )
+from cola_dlm.diagnostics import (
+    render_block_causal_attention_mask,
+    render_packed_block_causal_attention_mask,
+)
 
 
 def test_build_packed_dit_inputs_preserves_shape_dtype_and_device():
@@ -89,6 +93,43 @@ def test_attention_mask_allows_and_denies_noisy_query_pairs():
 
     assert mask[10, 11]
     assert mask[11, 10]
+
+
+def test_rendered_attention_mask_matches_l8_block_size2_regression():
+    z0, zt = _tiny_latents()
+    packed = build_packed_dit_inputs(z0, zt, block_size=2)
+
+    rendered = render_block_causal_attention_mask(
+        packed.attention_mask,
+        packed.block_ids,
+        packed.segment_ids,
+    )
+
+    expected = "\n".join(
+        [
+            "legend: #=allowed .=denied c=clean n=noisy",
+            "key_pos: 00 01 02 03 04 05 06 07 08 09 10 11 12 13",
+            "key_seg: c c c c c c n n n n n n n n",
+            "key_blk: 0 0 1 1 2 2 0 0 1 1 2 2 3 3",
+            "q00 clean b0: ##............",
+            "q01 clean b0: ##............",
+            "q02 clean b1: ####..........",
+            "q03 clean b1: ####..........",
+            "q04 clean b2: ######........",
+            "q05 clean b2: ######........",
+            "q06 noisy b0: ......##......",
+            "q07 noisy b0: ......##......",
+            "q08 noisy b1: ##......##....",
+            "q09 noisy b1: ##......##....",
+            "q10 noisy b2: ####......##..",
+            "q11 noisy b2: ####......##..",
+            "q12 noisy b3: ######......##",
+            "q13 noisy b3: ######......##",
+        ]
+    )
+
+    assert rendered == expected
+    assert render_packed_block_causal_attention_mask(8, 2) == expected
 
 
 def test_attention_mask_keeps_clean_context_rows_clean_only_and_block_causal():

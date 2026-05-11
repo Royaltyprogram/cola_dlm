@@ -296,6 +296,60 @@ def test_apply_clean_condition_repaint_repeatedly_restores_known_positions():
     assert torch.equal(restored[:, ~known_mask, :], drifted[:, ~known_mask, :])
 
 
+def test_first_mixed_generation_block_preserves_known_prefix_latents(
+    tiny_inference_config,
+):
+    prefix_latents = torch.arange(
+        1 * 6 * tiny_inference_config.dit.latent_dim,
+        dtype=torch.float32,
+    ).view(1, 6, tiny_inference_config.dit.latent_dim)
+    blocks = list(
+        iter_generation_blocks(
+            prefix_length=prefix_latents.shape[1],
+            num_new_latents=3,
+            block_size=4,
+        )
+    )
+    first_block = blocks[0]
+
+    assert (first_block.start, first_block.end) == (4, 8)
+    assert first_block.known_mask.tolist() == [True, True, False, False]
+
+    block_latents = torch.full(
+        (1, 4, tiny_inference_config.dit.latent_dim),
+        -1.0,
+    )
+    clean_block_latents = torch.zeros_like(block_latents)
+    clean_block_latents[:, :2] = prefix_latents[:, 4:6]
+    repainted = apply_clean_condition_repaint(
+        block_latents,
+        clean_block_latents,
+        first_block.known_mask,
+    )
+
+    torch.testing.assert_close(repainted[:, :2], prefix_latents[:, 4:6])
+    torch.testing.assert_close(repainted[:, 2:], block_latents[:, 2:])
+
+    dit = _ConstantDiT(tiny_inference_config.dit, value=0.0)
+    config = replace(tiny_inference_config, num_denoise_steps=1, cfg_scale=1.0)
+    generated = sample_latent_blocks(
+        dit,
+        prefix_latents,
+        inference_config=config,
+        num_new_latents=3,
+        block_size=4,
+        generator=torch.Generator().manual_seed(59),
+    )
+
+    assert generated.shape == (1, 3, tiny_inference_config.dit.latent_dim)
+    first_packed_latents = dit.packed_latent_calls[0]
+    torch.testing.assert_close(
+        first_packed_latents[:, 4:6],
+        prefix_latents[:, 4:6],
+    )
+    assert torch.isfinite(first_packed_latents[:, 6:8]).all()
+
+
 def test_denoise_inference_block_repaints_known_positions_exactly(
     tiny_inference_config,
 ):
@@ -632,6 +686,7 @@ class _ConstantDiT:
         self.config = config
         self.value = value
         self.call_count = 0
+        self.packed_latent_calls = []
 
     def __call__(
         self,
@@ -647,4 +702,5 @@ class _ConstantDiT:
             packed_latents.shape[1],
         )
         assert segment_ids.shape == (packed_latents.shape[1],)
+        self.packed_latent_calls.append(packed_latents.detach().clone())
         return torch.full_like(packed_latents, self.value)

@@ -9,6 +9,8 @@ from cola_dlm.diagnostics import (
     VAEDiagnostics,
     compute_flow_matching_loss_by_block,
     compute_vae_diagnostics,
+    render_packed_block_causal_attention_mask,
+    write_packed_block_causal_attention_mask,
 )
 from cola_dlm.flow_matching import flow_matching_loss
 from cola_dlm.vae import DiagonalGaussianPosterior, TextVAEOutput, vae_logsnr
@@ -21,6 +23,9 @@ def test_diagnostics_public_exports_are_small():
         "VAEDiagnostics",
         "compute_flow_matching_loss_by_block",
         "compute_vae_diagnostics",
+        "render_block_causal_attention_mask",
+        "render_packed_block_causal_attention_mask",
+        "write_packed_block_causal_attention_mask",
     )
 
 
@@ -275,6 +280,36 @@ def test_flow_matching_loss_by_block_validates_mask_and_selected_noisy_positions
             block_ids,
             segment_ids,
         )
+
+
+def test_packed_attention_mask_render_includes_readable_labels_and_blocks():
+    text = render_packed_block_causal_attention_mask(
+        sequence_length=8,
+        block_size=2,
+    )
+
+    assert "#=allowed" in text
+    assert ".=denied" in text
+    assert "c=clean" in text
+    assert "n=noisy" in text
+    assert "key_blk: 0 0 1 1 2 2 0 0 1 1 2 2 3 3" in text
+    assert "q00 clean b0:" in text
+    assert "q10 noisy b2:" in text
+
+
+def test_write_packed_attention_mask_render_writes_plain_text(tmp_path):
+    path = tmp_path / "mask.txt"
+
+    returned_path = write_packed_block_causal_attention_mask(
+        path,
+        sequence_length=8,
+        block_size=2,
+    )
+
+    assert returned_path == path
+    assert path.read_text(encoding="utf-8") == (
+        render_packed_block_causal_attention_mask(8, 2) + "\n"
+    )
 
 
 def _make_output(

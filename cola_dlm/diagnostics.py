@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import operator
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 
-from cola_dlm.block_causal_mask import NOISY_SEGMENT_ID
+from cola_dlm.block_causal_mask import (
+    CLEAN_SEGMENT_ID,
+    NOISY_SEGMENT_ID,
+    build_packed_dit_inputs,
+)
 from cola_dlm.vae import TextVAEOutput, vae_logsnr
 
 
@@ -97,6 +103,76 @@ def compute_flow_matching_loss_by_block(
         block_mask = selected_positions & (block_ids == block_index).unsqueeze(0)
         block_losses[block_index] = squared_error[block_mask].mean().detach()
     return block_losses
+
+
+def render_block_causal_attention_mask(
+    mask: torch.Tensor,
+    block_ids: torch.Tensor,
+    segment_ids: torch.Tensor,
+) -> str:
+    """Render a packed block-causal attention mask as compact ASCII text."""
+
+    _validate_attention_mask_render_inputs(mask, block_ids, segment_ids)
+
+    mask = mask.detach().cpu()
+    block_ids = block_ids.detach().cpu()
+    segment_ids = segment_ids.detach().cpu()
+
+    packed_len = mask.shape[0]
+    position_width = max(2, len(str(packed_len - 1)))
+    positions = [f"{position:0{position_width}d}" for position in range(packed_len)]
+    segment_labels = [
+        _compact_segment_label(int(segment_id.item())) for segment_id in segment_ids
+    ]
+    block_labels = [str(int(block_id.item())) for block_id in block_ids]
+
+    lines = [
+        "legend: #=allowed .=denied c=clean n=noisy",
+        "key_pos: " + " ".join(positions),
+        "key_seg: " + " ".join(segment_labels),
+        "key_blk: " + " ".join(block_labels),
+    ]
+    for query_index in range(packed_len):
+        query_segment = _segment_name(int(segment_ids[query_index].item()))
+        query_block = int(block_ids[query_index].item())
+        markers = "".join(
+            "#" if bool(allowed.item()) else "." for allowed in mask[query_index]
+        )
+        lines.append(
+            f"q{query_index:0{position_width}d} {query_segment} b{query_block}: "
+            f"{markers}"
+        )
+    return "\n".join(lines)
+
+
+def render_packed_block_causal_attention_mask(
+    sequence_length: int,
+    block_size: int,
+) -> str:
+    """Build and render the same packed mask used by the DiT training path."""
+
+    sequence_length = _normalize_sequence_length(sequence_length)
+    z0 = torch.zeros(1, sequence_length, 1)
+    zt = torch.zeros_like(z0)
+    packed = build_packed_dit_inputs(z0, zt, block_size=block_size)
+    return render_block_causal_attention_mask(
+        packed.attention_mask,
+        packed.block_ids,
+        packed.segment_ids,
+    )
+
+
+def write_packed_block_causal_attention_mask(
+    path: str | Path,
+    sequence_length: int,
+    block_size: int,
+) -> Path:
+    """Write a rendered packed block-causal mask to a plain text file."""
+
+    output_path = Path(path)
+    text = render_packed_block_causal_attention_mask(sequence_length, block_size)
+    output_path.write_text(text + "\n", encoding="utf-8")
+    return output_path
 
 
 def _reconstruction_accuracy(
@@ -238,8 +314,78 @@ def _validate_packed_index_tensor(
         raise ValueError(f"{name} and prediction must be on the same device")
 
 
+def _validate_attention_mask_render_inputs(
+    mask: torch.Tensor,
+    block_ids: torch.Tensor,
+    segment_ids: torch.Tensor,
+) -> None:
+    if not isinstance(mask, torch.Tensor):
+        raise TypeError("mask must be a torch.Tensor")
+    if mask.ndim != 2 or mask.shape[0] != mask.shape[1]:
+        raise ValueError("mask must be a square tensor shaped [packed_len, packed_len]")
+    if mask.shape[0] == 0:
+        raise ValueError("mask must include at least one packed position")
+    if mask.dtype != torch.bool:
+        raise ValueError("mask must be a boolean tensor")
+
+    packed_len = mask.shape[0]
+    _validate_render_index_tensor(block_ids, "block_ids", packed_len, mask.device)
+    _validate_render_index_tensor(segment_ids, "segment_ids", packed_len, mask.device)
+
+    if torch.any(block_ids < 0).item():
+        raise ValueError("block_ids must be non-negative")
+    valid_segments = (segment_ids == CLEAN_SEGMENT_ID) | (
+        segment_ids == NOISY_SEGMENT_ID
+    )
+    if not valid_segments.all().item():
+        raise ValueError("segment_ids values must be clean or noisy segment ids")
+
+
+def _validate_render_index_tensor(
+    tensor: torch.Tensor,
+    name: str,
+    packed_len: int,
+    device: torch.device,
+) -> None:
+    if not isinstance(tensor, torch.Tensor):
+        raise TypeError(f"{name} must be a torch.Tensor")
+    if tensor.shape != (packed_len,):
+        raise ValueError(f"{name} must be shaped [packed_len]")
+    if tensor.dtype not in (torch.int8, torch.int16, torch.int32, torch.int64):
+        raise ValueError(f"{name} must be an integer tensor")
+    if tensor.device != device:
+        raise ValueError(f"{name} and mask must be on the same device")
+
+
+def _compact_segment_label(segment_id: int) -> str:
+    if segment_id == CLEAN_SEGMENT_ID:
+        return "c"
+    return "n"
+
+
+def _segment_name(segment_id: int) -> str:
+    if segment_id == CLEAN_SEGMENT_ID:
+        return "clean"
+    return "noisy"
+
+
+def _normalize_sequence_length(sequence_length: int) -> int:
+    if isinstance(sequence_length, bool):
+        raise TypeError("sequence_length must be an integer, got bool")
+    try:
+        sequence_length = operator.index(sequence_length)
+    except TypeError as exc:
+        raise TypeError("sequence_length must be an integer") from exc
+    if sequence_length <= 0:
+        raise ValueError("sequence_length must be positive")
+    return sequence_length
+
+
 __all__ = (
     "VAEDiagnostics",
     "compute_flow_matching_loss_by_block",
     "compute_vae_diagnostics",
+    "render_block_causal_attention_mask",
+    "render_packed_block_causal_attention_mask",
+    "write_packed_block_causal_attention_mask",
 )
