@@ -317,6 +317,7 @@ class TextVAE(nn.Module):
         *,
         deterministic: bool = False,
         generator: torch.Generator | None = None,
+        decoder_token_ids: torch.Tensor | None = None,
         mask_loss_positions: torch.Tensor | None = None,
     ) -> TextVAEOutput:
         """Encode [batch, seq] tokens and decode logits [batch, seq, vocab]."""
@@ -329,6 +330,7 @@ class TextVAE(nn.Module):
         )
         decoder_tokens = self.prepare_decoder_tokens(
             token_ids,
+            decoder_token_ids=decoder_token_ids,
             mask_loss_positions=mask_loss_positions,
         )
         logits = self.decoder(
@@ -347,16 +349,19 @@ class TextVAE(nn.Module):
         self,
         token_ids: torch.Tensor,
         *,
+        decoder_token_ids: torch.Tensor | None = None,
         mask_loss_positions: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Return decoder token ids, preserving [batch, seq] shape."""
 
+        if decoder_token_ids is not None and decoder_token_ids.shape != token_ids.shape:
+            raise ValueError("decoder_token_ids must match token_ids shape")
         if (
             mask_loss_positions is not None
             and mask_loss_positions.shape != token_ids.shape
         ):
             raise ValueError("mask_loss_positions must match token_ids shape")
-        return token_ids
+        return token_ids if decoder_token_ids is None else decoder_token_ids
 
 
 def _validate_text_vae_module_config(

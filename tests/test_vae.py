@@ -281,6 +281,30 @@ def test_text_vae_deterministic_mode_uses_posterior_means(tiny_vae_config):
     assert torch.allclose(output.latents, output.posterior.mu)
 
 
+def test_text_vae_forward_accepts_shape_preserving_decoder_token_ids(
+    tiny_vae_config,
+):
+    torch.manual_seed(0)
+    model = TextVAE(config=tiny_vae_config)
+    token_ids = torch.tensor([[1, 2, 3, 4]])
+    decoder_token_ids = torch.tensor([[1, 99, 3, 99]])
+
+    output = model(
+        token_ids,
+        deterministic=True,
+        decoder_token_ids=decoder_token_ids,
+    )
+
+    assert output.logits.shape == (1, 4, tiny_vae_config.vocab_size)
+    assert torch.equal(
+        model.prepare_decoder_tokens(
+            token_ids,
+            decoder_token_ids=decoder_token_ids,
+        ),
+        decoder_token_ids,
+    )
+
+
 def test_text_vae_tiny_config_integration_with_patch_size_one():
     torch.manual_seed(0)
     config = VAEConfig(
