@@ -14,8 +14,22 @@ run_metadata = loaded.metadata
 ```
 
 The tiny-debug recipes use the same small dimensions as the pytest fixtures and
-set only a couple of local training steps. The paper recipes mirror the current
-dataclass defaults in `cola_dlm/config.py`.
+set only a couple of local training steps.
+
+Recipes may optionally declare a top-level `extends` path. The path is resolved
+relative to the recipe that declares it. Inherited `config` objects are merged
+deeply, while scalar and list values replace the base value. Top-level metadata
+is also inherited, with the child recipe winning on key conflicts.
+
+The stable paper-scale entry points are:
+
+- `configs/stage1_paper.json`
+- `configs/stage2_paper.json`
+
+`configs/stage2_paper.json` intentionally contains no behavioral overrides; it
+extends `configs/paper/stage2_paper_base.json`, which holds the paper-scale VAE,
+DiT, diffusion, optimizer, batch, and token-count defaults traced to
+`docs/reproduction/cola_dlm/00_context.md`.
 
 Sampling can use `--prompt-token-ids` directly, which is the preferred smoke-test
 path because it avoids tokenizer dependencies. `--prompt` is available for local

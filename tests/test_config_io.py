@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,12 @@ from cola_dlm.config_io import (
 
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
+CONTEXT_DOC = "docs/reproduction/cola_dlm/00_context.md"
+
+
+def _write_recipe(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def test_stage1_config_dict_round_trip(tiny_stage1_config):
@@ -56,6 +63,107 @@ def test_save_and_load_config_preserves_metadata(tmp_path, tiny_stage1_config):
     )
 
 
+def test_inherited_recipe_without_overrides_matches_base_config(
+    tmp_path,
+    tiny_stage2_config,
+):
+    base_path = tmp_path / "base.json"
+    child_path = tmp_path / "child.json"
+    _write_recipe(
+        base_path,
+        {
+            "description": "base",
+            "config": config_to_dict(tiny_stage2_config),
+        },
+    )
+    _write_recipe(
+        child_path,
+        {
+            "extends": "base.json",
+            "description": "child",
+        },
+    )
+
+    loaded = load_config(child_path, Stage2Config)
+
+    assert loaded.config == tiny_stage2_config
+    assert loaded.metadata == {"description": "child"}
+
+
+def test_inherited_recipe_merges_config_metadata_and_relative_extends(
+    tmp_path,
+    tiny_stage1_config,
+):
+    base_path = tmp_path / "paper" / "base.json"
+    child_path = tmp_path / "variants" / "child.json"
+    _write_recipe(
+        base_path,
+        {
+            "description": "base",
+            "source_document": CONTEXT_DOC,
+            "owner": "base",
+            "config": config_to_dict(tiny_stage1_config),
+        },
+    )
+    _write_recipe(
+        child_path,
+        {
+            "extends": "../paper/base.json",
+            "description": "child",
+            "owner": "child",
+            "config": {
+                "optimizer": {
+                    "betas": [0.8, 0.9],
+                    "peak_lr": 2.0e-4,
+                },
+                "global_batch_size": 4,
+            },
+        },
+    )
+
+    loaded = load_config(child_path, Stage1Config)
+
+    assert loaded.config.optimizer.peak_lr == 2.0e-4
+    assert loaded.config.optimizer.betas == (0.8, 0.9)
+    assert (
+        loaded.config.optimizer.warmup_steps
+        == tiny_stage1_config.optimizer.warmup_steps
+    )
+    assert loaded.config.global_batch_size == 4
+    assert loaded.config.tokens_per_step == tiny_stage1_config.tokens_per_step
+    assert loaded.metadata == {
+        "description": "child",
+        "source_document": CONTEXT_DOC,
+        "owner": "child",
+    }
+
+
+def test_inherited_recipe_missing_base_fails_clearly(tmp_path):
+    child_path = tmp_path / "child.json"
+    _write_recipe(child_path, {"extends": "missing.json"})
+
+    with pytest.raises(FileNotFoundError, match="Config file not found"):
+        load_config(child_path, Stage1Config)
+
+
+def test_inherited_recipe_requires_string_extends(tmp_path):
+    child_path = tmp_path / "child.json"
+    _write_recipe(child_path, {"extends": None})
+
+    with pytest.raises(TypeError, match="extends must be a string"):
+        load_config(child_path, Stage1Config)
+
+
+def test_inherited_recipe_cycle_fails_clearly(tmp_path):
+    first_path = tmp_path / "first.json"
+    second_path = tmp_path / "nested" / "second.json"
+    _write_recipe(first_path, {"extends": "nested/second.json"})
+    _write_recipe(second_path, {"extends": "../first.json"})
+
+    with pytest.raises(ValueError, match="Config inheritance cycle detected"):
+        load_config(first_path, Stage1Config)
+
+
 def test_recipe_files_load_without_optional_dependencies():
     recipes = [
         ("stage1_tiny_debug.json", Stage1Config),
@@ -63,6 +171,7 @@ def test_recipe_files_load_without_optional_dependencies():
         ("inference_tiny_debug.json", InferenceConfig),
         ("stage1_paper.json", Stage1Config),
         ("stage2_paper.json", Stage2Config),
+        ("paper/stage2_paper_base.json", Stage2Config),
     ]
 
     for file_name, config_type in recipes:
@@ -101,6 +210,8 @@ def test_paper_recipes_match_default_configs():
 
     assert stage1.config == Stage1Config()
     assert stage2.config == Stage2Config()
+    assert stage1.metadata["source_document"] == CONTEXT_DOC
+    assert stage2.metadata["source_document"] == CONTEXT_DOC
 
 
 def test_unknown_nested_config_keys_fail_clearly():

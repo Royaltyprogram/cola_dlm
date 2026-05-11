@@ -1,9 +1,12 @@
 {
-  "description": "Stable public entry point for paper-scale Stage 1 VAE defaults.",
+  "description": "Paper-scale Stage 2 base recipe for VAE and block-causal DiT training.",
   "source_document": "docs/reproduction/cola_dlm/00_context.md",
   "source_sections": {
     "architecture": "Reproduction Target",
     "vae_interface": "Text VAE",
+    "stage2_training": "Stage 2: Joint VAE and Block-Causal DiT",
+    "flow_matching": "Flow Matching Prior",
+    "noise_schedule": "Noise Schedule",
     "optimization": "Reproduction Target"
   },
   "config": {
@@ -24,6 +27,29 @@
       "use_rope": true,
       "attention_pattern": "causal"
     },
+    "dit": {
+      "sequence_length": 512,
+      "latent_dim": 16,
+      "block_size": 16,
+      "num_layers": 24,
+      "hidden_size": 2048,
+      "ffn_size": 8192,
+      "num_attention_heads": 16,
+      "attention_head_dim": 128,
+      "positional_encoding": "rope",
+      "attention_pattern": "block_causal",
+      "dropout": 0.0,
+      "activation": "gelu",
+      "use_segment_embedding": false
+    },
+    "diffusion": {
+      "prediction_type": "velocity",
+      "timestep_schedule": "logit_normal",
+      "logit_normal_loc": 1.0,
+      "logit_normal_scale": null,
+      "t_start": 1.0,
+      "t_end": 0.0
+    },
     "optimizer": {
       "name": "adamw",
       "peak_lr": 0.00015,
@@ -38,7 +64,9 @@
     },
     "global_batch_size": 1408,
     "tokens_per_step": 720896,
-    "kl_weight": null,
-    "mask_loss_weight": null
+    "vae_dit_lr_ratio": 1.0,
+    "vae_loss_weight": null,
+    "flow_matching_loss_weight": null,
+    "reference_kl_weight": null
   }
 }

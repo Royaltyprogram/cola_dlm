@@ -11,6 +11,7 @@ from typing import Any, Generic, Literal, TypeVar, Union, get_args, get_origin
 
 
 ConfigT = TypeVar("ConfigT")
+_RECIPE_RESERVED_KEYS = frozenset({"config", "extends"})
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,12 @@ class LoadedConfig(Generic[ConfigT]):
     """A loaded model config plus top-level run metadata from a recipe file."""
 
     config: ConfigT
+    metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _ResolvedRecipe:
+    config_values: Any
     metadata: dict[str, Any]
 
 
@@ -47,6 +54,40 @@ def load_config(path: str | Path, config_type: type[ConfigT]) -> LoadedConfig[Co
     _require_dataclass_type(config_type)
     recipe_path = Path(path)
     _require_json_path(recipe_path)
+    resolved = _load_recipe(recipe_path, stack=())
+
+    return LoadedConfig(
+        config=config_from_dict(config_type, resolved.config_values),
+        metadata=resolved.metadata,
+    )
+
+
+def _load_recipe(path: Path, *, stack: tuple[Path, ...]) -> _ResolvedRecipe:
+    recipe_path = Path(path)
+    _require_json_path(recipe_path)
+    recipe_key = recipe_path.resolve(strict=False)
+    if recipe_key in stack:
+        cycle_start = stack.index(recipe_key)
+        cycle = stack[cycle_start:] + (recipe_key,)
+        raise ValueError(
+            "Config inheritance cycle detected: "
+            + " -> ".join(str(item) for item in cycle)
+        )
+
+    raw = _read_recipe(recipe_path)
+    config_values, metadata, extends = _split_recipe(raw, recipe_path)
+    if extends is None:
+        return _ResolvedRecipe(config_values=config_values, metadata=metadata)
+
+    base_path = recipe_path.parent / extends
+    base = _load_recipe(base_path, stack=stack + (recipe_key,))
+    return _ResolvedRecipe(
+        config_values=_deep_merge_json(base.config_values, config_values),
+        metadata={**base.metadata, **metadata},
+    )
+
+
+def _read_recipe(recipe_path: Path) -> Mapping[str, Any]:
     try:
         raw = json.loads(recipe_path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
@@ -56,18 +97,50 @@ def load_config(path: str | Path, config_type: type[ConfigT]) -> LoadedConfig[Co
 
     if not isinstance(raw, Mapping):
         raise TypeError("Config file must contain a JSON object")
+    return raw
+
+
+def _split_recipe(
+    raw: Mapping[str, Any],
+    recipe_path: Path,
+) -> tuple[Any, dict[str, Any], str | None]:
+    has_extends = "extends" in raw
+    extends = raw.get("extends")
+    if has_extends and not isinstance(extends, str):
+        raise TypeError(f"Config recipe extends must be a string: {recipe_path}")
 
     if "config" in raw:
         config_values = raw["config"]
-        metadata = {key: value for key, value in raw.items() if key != "config"}
+        metadata = _recipe_metadata(raw)
+    elif has_extends:
+        config_values = {}
+        metadata = _recipe_metadata(raw)
     else:
         config_values = raw
         metadata = {}
 
-    return LoadedConfig(
-        config=config_from_dict(config_type, config_values),
-        metadata=dict(metadata),
-    )
+    return config_values, dict(metadata), extends
+
+
+def _recipe_metadata(raw: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in raw.items()
+        if key not in _RECIPE_RESERVED_KEYS
+    }
+
+
+def _deep_merge_json(base: Any, override: Any) -> Any:
+    if not isinstance(base, Mapping) or not isinstance(override, Mapping):
+        return override
+
+    merged = dict(base)
+    for key, value in override.items():
+        if key in merged:
+            merged[key] = _deep_merge_json(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def save_config(
@@ -89,6 +162,8 @@ def save_config(
             raise TypeError("metadata must be a mapping")
         if "config" in metadata:
             raise ValueError("metadata must not contain the reserved key 'config'")
+        if "extends" in metadata:
+            raise ValueError("metadata must not contain the reserved key 'extends'")
         payload = {"config": config_values, **dict(metadata)}
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
