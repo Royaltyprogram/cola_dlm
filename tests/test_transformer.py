@@ -112,6 +112,26 @@ def test_rotary_embedding_keeps_first_position_unchanged():
     assert torch.allclose(rotated_key[:, :, 0, :], key[:, :, 0, :])
 
 
+def test_multi_head_attention_rejects_hidden_size_not_divisible_by_heads():
+    with pytest.raises(ValueError, match="hidden_size must be divisible by num_heads"):
+        MultiHeadAttention(hidden_size=10, num_heads=3)
+
+
+def test_multi_head_attention_rejects_mismatched_hidden_size_and_head_dim():
+    with pytest.raises(ValueError, match="hidden_size must equal num_heads"):
+        MultiHeadAttention(hidden_size=8, num_heads=3, head_dim=4)
+
+
+def test_multi_head_attention_rejects_odd_rope_head_dim():
+    with pytest.raises(ValueError, match="head_dim must be even when use_rope=True"):
+        MultiHeadAttention(
+            hidden_size=6,
+            num_heads=2,
+            head_dim=3,
+            use_rope=True,
+        )
+
+
 def test_multi_head_attention_causal_mask_blocks_future_tokens():
     torch.manual_seed(0)
     attention = MultiHeadAttention(hidden_size=8, num_heads=2, dropout=0.0)
@@ -126,10 +146,11 @@ def test_multi_head_attention_causal_mask_blocks_future_tokens():
     assert torch.allclose(output[:, :2, :], changed_output[:, :2, :], atol=1.0e-6)
 
 
-def test_multi_head_attention_boolean_mask_marks_allowed_positions():
+def test_multi_head_attention_boolean_mask_uses_true_for_allowed_positions():
     attention = MultiHeadAttention(hidden_size=2, num_heads=1, dropout=0.0)
     attention.eval()
     with torch.no_grad():
+        # Zero query/key scores make each allowed value receive equal attention.
         attention.query_projection.weight.zero_()
         attention.query_projection.bias.zero_()
         attention.key_projection.weight.zero_()
@@ -140,7 +161,7 @@ def test_multi_head_attention_boolean_mask_marks_allowed_positions():
         attention.output_projection.bias.zero_()
 
     hidden_states = torch.tensor([[[1.0, 0.0], [0.0, 2.0], [3.0, 4.0]]])
-    attention_mask = torch.tensor(
+    allowed_positions = torch.tensor(
         [
             [True, False, False],
             [False, True, True],
@@ -148,7 +169,7 @@ def test_multi_head_attention_boolean_mask_marks_allowed_positions():
         ]
     )
 
-    output = attention(hidden_states, attention_mask=attention_mask)
+    output = attention(hidden_states, attention_mask=allowed_positions)
 
     expected = torch.tensor([[[1.0, 0.0], [1.5, 3.0], [2.0, 2.0]]])
     assert torch.allclose(output, expected)
@@ -163,6 +184,15 @@ def test_multi_head_attention_accepts_additive_attention_masks():
     output = attention(hidden_states, attention_mask=attention_mask)
 
     assert output.shape == (2, 4, 8)
+
+
+def test_multi_head_attention_rejects_unsupported_attention_mask_shape():
+    attention = MultiHeadAttention(hidden_size=2, num_heads=1, dropout=0.0)
+    hidden_states = torch.tensor([[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]])
+    one_dimensional_mask = torch.ones(3, dtype=torch.bool)
+
+    with pytest.raises(ValueError, match="attention_mask must be shaped"):
+        attention(hidden_states, attention_mask=one_dimensional_mask)
 
 
 def test_transformer_block_preserves_hidden_shape_with_mask_and_causal_flag():

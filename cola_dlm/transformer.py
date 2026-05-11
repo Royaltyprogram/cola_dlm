@@ -155,7 +155,7 @@ class RotaryEmbedding(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    """Multi-head self-attention preserving [batch, seq, hidden] shape."""
+    """Self-attend [batch, seq, hidden] states with causal or custom masks."""
 
     def __init__(
         self,
@@ -171,12 +171,18 @@ class MultiHeadAttention(nn.Module):
 
         if head_dim is None:
             if hidden_size % num_heads != 0:
-                raise ValueError("hidden_size must be divisible by num_heads")
+                raise ValueError(
+                    "hidden_size must be divisible by num_heads when head_dim is not set"
+                )
             head_dim = hidden_size // num_heads
         if head_dim <= 0:
             raise ValueError("head_dim must be positive")
         if hidden_size != num_heads * head_dim:
-            raise ValueError("hidden_size must equal num_heads * head_dim")
+            raise ValueError(
+                "hidden_size must equal num_heads * head_dim "
+                f"(got hidden_size={hidden_size}, num_heads={num_heads}, "
+                f"head_dim={head_dim})"
+            )
         if use_rope and head_dim % 2 != 0:
             raise ValueError("head_dim must be even when use_rope=True")
 
@@ -286,7 +292,7 @@ class TransformerBlock(nn.Module):
 
 
 class TransformerStack(nn.Module):
-    """Small stack of pre-norm transformer blocks."""
+    """Stack pre-norm blocks while preserving [batch, seq, hidden] shape."""
 
     def __init__(
         self,
@@ -376,6 +382,8 @@ def _normalize_attention_mask(
     dtype: torch.dtype,
     device: torch.device,
 ) -> torch.Tensor | None:
+    """Convert supported bool or additive masks to an additive score mask."""
+
     if attention_mask is None:
         return None
 
