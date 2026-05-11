@@ -241,6 +241,98 @@ class MultiHeadAttention(nn.Module):
         return tensor.transpose(1, 2)
 
 
+class TransformerBlock(nn.Module):
+    """Pre-norm transformer block preserving [batch, seq, hidden] shape."""
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        ffn_size: int,
+        head_dim: int | None = None,
+        dropout: float = 0.0,
+        activation: str = "gelu",
+        use_rope: bool = False,
+    ) -> None:
+        super().__init__()
+        self.norm1 = RMSNorm(hidden_size)
+        self.attention = MultiHeadAttention(
+            hidden_size=hidden_size,
+            num_heads=num_heads,
+            head_dim=head_dim,
+            dropout=dropout,
+            use_rope=use_rope,
+        )
+        self.norm2 = RMSNorm(hidden_size)
+        self.feed_forward = FeedForward(
+            hidden_size=hidden_size,
+            ffn_size=ffn_size,
+            dropout=dropout,
+            activation=activation,
+        )
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        causal: bool = False,
+    ) -> torch.Tensor:
+        hidden_states = hidden_states + self.attention(
+            self.norm1(hidden_states),
+            attention_mask=attention_mask,
+            causal=causal,
+        )
+        return hidden_states + self.feed_forward(self.norm2(hidden_states))
+
+
+class TransformerStack(nn.Module):
+    """Small stack of pre-norm transformer blocks."""
+
+    def __init__(
+        self,
+        num_layers: int,
+        hidden_size: int,
+        num_heads: int,
+        ffn_size: int,
+        head_dim: int | None = None,
+        dropout: float = 0.0,
+        activation: str = "gelu",
+        use_rope: bool = False,
+    ) -> None:
+        super().__init__()
+        if num_layers <= 0:
+            raise ValueError("num_layers must be positive")
+
+        self.layers = nn.ModuleList(
+            [
+                TransformerBlock(
+                    hidden_size=hidden_size,
+                    num_heads=num_heads,
+                    ffn_size=ffn_size,
+                    head_dim=head_dim,
+                    dropout=dropout,
+                    activation=activation,
+                    use_rope=use_rope,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        causal: bool = False,
+    ) -> torch.Tensor:
+        for layer in self.layers:
+            hidden_states = layer(
+                hidden_states,
+                attention_mask=attention_mask,
+                causal=causal,
+            )
+        return hidden_states
+
+
 def _build_activation(activation: str) -> nn.Module:
     if activation == "gelu":
         return nn.GELU()
@@ -331,4 +423,6 @@ __all__ = (
     "FeedForward",
     "RotaryEmbedding",
     "MultiHeadAttention",
+    "TransformerBlock",
+    "TransformerStack",
 )

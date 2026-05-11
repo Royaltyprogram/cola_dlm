@@ -8,6 +8,8 @@ from cola_dlm.transformer import (
     RMSNorm,
     RotaryEmbedding,
     TokenEmbedding,
+    TransformerBlock,
+    TransformerStack,
 )
 
 
@@ -21,6 +23,8 @@ def test_transformer_public_exports_are_core_helpers():
         "FeedForward",
         "RotaryEmbedding",
         "MultiHeadAttention",
+        "TransformerBlock",
+        "TransformerStack",
     )
 
 
@@ -159,3 +163,58 @@ def test_multi_head_attention_accepts_additive_attention_masks():
     output = attention(hidden_states, attention_mask=attention_mask)
 
     assert output.shape == (2, 4, 8)
+
+
+def test_transformer_block_preserves_hidden_shape_with_mask_and_causal_flag():
+    block = TransformerBlock(
+        hidden_size=8,
+        num_heads=2,
+        ffn_size=16,
+        dropout=0.0,
+    )
+    hidden_states = torch.randn(2, 4, 8)
+    attention_mask = torch.ones(4, 4, dtype=torch.bool)
+
+    output = block(hidden_states, attention_mask=attention_mask, causal=True)
+
+    assert output.shape == hidden_states.shape
+
+
+def test_tiny_transformer_stack_forward_produces_logits_shape_in_eval_mode():
+    torch.manual_seed(0)
+    vocab_size = 13
+    hidden_size = 8
+    token_ids = torch.tensor([[1, 2, 3, 4], [4, 3, 2, 1]])
+    attention_mask = torch.ones(token_ids.shape[1], token_ids.shape[1], dtype=torch.bool)
+
+    embedding = TokenEmbedding(vocab_size=vocab_size, hidden_size=hidden_size)
+    transformer = TransformerStack(
+        num_layers=2,
+        hidden_size=hidden_size,
+        num_heads=2,
+        ffn_size=16,
+        dropout=0.0,
+    )
+    projection = OutputProjection(hidden_size=hidden_size, vocab_size=vocab_size)
+    embedding.eval()
+    transformer.eval()
+    projection.eval()
+
+    with torch.no_grad():
+        hidden_states = embedding(token_ids)
+        hidden_states = transformer(
+            hidden_states,
+            attention_mask=attention_mask,
+            causal=True,
+        )
+        logits = projection(hidden_states)
+        repeat_logits = projection(
+            transformer(
+                embedding(token_ids),
+                attention_mask=attention_mask,
+                causal=True,
+            )
+        )
+
+    assert logits.shape == (2, 4, vocab_size)
+    assert torch.allclose(logits, repeat_logits)
