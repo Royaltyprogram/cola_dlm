@@ -33,8 +33,6 @@ def build_packed_dit_inputs(
 
     batch_size, sequence_length, _ = z0.shape
     clean_length = sequence_length - block_size
-    packed_length = clean_length + sequence_length
-
     clean_context = z0[:, :clean_length]
     if detach_clean_context:
         clean_context = clean_context.detach()
@@ -79,12 +77,7 @@ def build_packed_dit_inputs(
         ),
         dim=1,
     )
-    attention_mask = torch.ones(
-        packed_length,
-        packed_length,
-        dtype=torch.bool,
-        device=z0.device,
-    )
+    attention_mask = build_block_causal_attention_mask(block_ids, segment_ids)
 
     return PackedDiTInputs(
         latents=latents,
@@ -92,6 +85,34 @@ def build_packed_dit_inputs(
         loss_mask=loss_mask,
         block_ids=block_ids,
         segment_ids=segment_ids,
+    )
+
+
+def build_block_causal_attention_mask(
+    block_ids: torch.Tensor,
+    segment_ids: torch.Tensor,
+) -> torch.Tensor:
+    query_block_ids = block_ids[:, None]
+    key_block_ids = block_ids[None, :]
+    query_is_clean = segment_ids[:, None] == CLEAN_SEGMENT_ID
+    query_is_noisy = segment_ids[:, None] == NOISY_SEGMENT_ID
+    key_is_clean = segment_ids[None, :] == CLEAN_SEGMENT_ID
+    key_is_noisy = segment_ids[None, :] == NOISY_SEGMENT_ID
+
+    clean_query_visibility = (
+        query_is_clean & key_is_clean & (key_block_ids <= query_block_ids)
+    )
+    noisy_query_clean_visibility = (
+        query_is_noisy & key_is_clean & (key_block_ids < query_block_ids)
+    )
+    noisy_query_current_block_visibility = (
+        query_is_noisy & key_is_noisy & (key_block_ids == query_block_ids)
+    )
+
+    return (
+        clean_query_visibility
+        | noisy_query_clean_visibility
+        | noisy_query_current_block_visibility
     )
 
 

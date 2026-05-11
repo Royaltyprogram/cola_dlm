@@ -63,6 +63,49 @@ def test_build_packed_dit_inputs_detaches_clean_context_by_default():
     torch.testing.assert_close(zt.grad, torch.ones_like(zt))
 
 
+def test_attention_mask_allows_and_denies_noisy_query_pairs():
+    z0, zt = _tiny_latents()
+
+    packed = build_packed_dit_inputs(z0, zt, block_size=2)
+    mask = packed.attention_mask
+
+    # Packed positions for L=8, block_size=2:
+    # clean indices 0..5 are clean blocks 0, 1, 2
+    # noisy indices 6..13 are noisy blocks 0, 1, 2, 3
+    for query_index in (6, 7):
+        assert mask[query_index, 6:8].all()
+        assert not mask[query_index, :6].any()
+        assert not mask[query_index, 8:14].any()
+
+    for query_index in (10, 11):
+        assert mask[query_index, 0:4].all()
+        assert mask[query_index, 10:12].all()
+        assert not mask[query_index, 4:6].any()
+        assert not mask[query_index, 6:8].any()
+        assert not mask[query_index, 8:10].any()
+        assert not mask[query_index, 12:14].any()
+
+    assert mask[10, 11]
+    assert mask[11, 10]
+
+
+def test_attention_mask_keeps_clean_context_rows_clean_only_and_block_causal():
+    z0, zt = _tiny_latents()
+
+    packed = build_packed_dit_inputs(z0, zt, block_size=2)
+    mask = packed.attention_mask
+    clean_indices = slice(0, 6)
+    noisy_indices = slice(6, 14)
+    clean_block_ids = packed.block_ids[clean_indices]
+
+    assert not mask[clean_indices, noisy_indices].any()
+    for query_index in range(6):
+        past_or_current_clean_keys = clean_block_ids <= packed.block_ids[query_index]
+        future_clean_keys = clean_block_ids > packed.block_ids[query_index]
+        assert mask[query_index, clean_indices][past_or_current_clean_keys].all()
+        assert not mask[query_index, clean_indices][future_clean_keys].any()
+
+
 def _tiny_latents() -> tuple[torch.Tensor, torch.Tensor]:
     z0 = torch.arange(24, dtype=torch.float64).reshape(1, 8, 3)
     zt = torch.arange(100, 124, dtype=torch.float64).reshape(1, 8, 3)
