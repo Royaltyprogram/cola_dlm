@@ -13,6 +13,15 @@ from cola_dlm.config import DiffusionConfig
 
 _DEFAULT_LOGIT_NORMAL_SCALE = 1.0
 
+__all__ = (
+    "flow_matching_loss",
+    "flow_matching_target",
+    "linear_bridge",
+    "sample_timestep",
+    "velocity_target",
+    "x0_target",
+)
+
 
 def sample_timestep(
     config: DiffusionConfig,
@@ -67,7 +76,11 @@ def linear_bridge(
     z1: torch.Tensor,
     timestep: torch.Tensor,
 ) -> torch.Tensor:
-    """Interpolate clean latents ``z0`` toward base-noise latents ``z1``."""
+    """Return ``z_t = (1 - t) * z0 + t * z1`` for latent-shaped tensors.
+
+    ``timestep`` may be shaped like ``[batch]``, ``[batch, 1]``, or any shape
+    already broadcastable to ``z0`` and ``z1``.
+    """
 
     _validate_latent_pair(z0, z1)
     timestep = _broadcast_timestep(timestep, z0)
@@ -75,11 +88,15 @@ def linear_bridge(
 
 
 def velocity_target(z0: torch.Tensor, z1: torch.Tensor) -> torch.Tensor:
+    """Return the bridge velocity target ``u_t = z1 - z0``."""
+
     _validate_latent_pair(z0, z1)
     return z1 - z0
 
 
 def x0_target(z0: torch.Tensor) -> torch.Tensor:
+    """Return the clean latent target with the same shape as ``z0``."""
+
     _validate_floating_tensor(z0, "z0")
     return z0
 
@@ -89,6 +106,8 @@ def flow_matching_target(
     z1: torch.Tensor,
     prediction_type: str,
 ) -> torch.Tensor:
+    """Select the Flow Matching target for a ``DiffusionConfig`` prediction type."""
+
     if prediction_type == "velocity":
         return velocity_target(z0, z1)
     if prediction_type == "x0":
@@ -105,6 +124,8 @@ def flow_matching_loss(
     target: torch.Tensor,
     loss_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
+    """Compute scalar MSE, optionally over mask-selected latent elements."""
+
     _validate_prediction_target(prediction, target)
     squared_error = (prediction - target).square()
     if loss_mask is None:
@@ -296,13 +317,3 @@ def _sample_logit_normal(
 def _clamp_open_unit(timestep: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
     eps = torch.finfo(dtype).eps
     return timestep.clamp(min=eps, max=1.0 - eps)
-
-
-__all__ = (
-    "flow_matching_loss",
-    "flow_matching_target",
-    "linear_bridge",
-    "sample_timestep",
-    "velocity_target",
-    "x0_target",
-)

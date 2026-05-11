@@ -2,6 +2,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+import cola_dlm.flow_matching as flow_matching
 from cola_dlm.config import DiffusionConfig
 from cola_dlm.flow_matching import (
     flow_matching_loss,
@@ -11,6 +12,17 @@ from cola_dlm.flow_matching import (
     velocity_target,
     x0_target,
 )
+
+
+def test_flow_matching_public_surface_is_concise():
+    assert flow_matching.__all__ == (
+        "flow_matching_loss",
+        "flow_matching_target",
+        "linear_bridge",
+        "sample_timestep",
+        "velocity_target",
+        "x0_target",
+    )
 
 
 def test_uniform_timestep_samples_have_requested_shape_and_open_range():
@@ -149,13 +161,18 @@ def test_linear_bridge_matches_midpoint_formula():
     torch.testing.assert_close(bridged, expected)
 
 
-def test_velocity_target_matches_latent_difference():
+def test_velocity_target_matches_analytical_linear_bridge_formula():
     z0 = torch.tensor([[[1.0, -1.0], [3.0, 4.0]]])
     z1 = torch.tensor([[[2.5, 0.0], [-1.0, 10.0]]])
+    timestep = torch.tensor([0.25])
 
     target = velocity_target(z0, z1)
 
-    torch.testing.assert_close(target, z1 - z0)
+    broadcast_timestep = timestep.reshape(1, 1, 1)
+    expected_z_t = (1 - broadcast_timestep) * z0 + broadcast_timestep * z1
+    expected_velocity = z1 - z0
+    torch.testing.assert_close(linear_bridge(z0, z1, timestep), expected_z_t)
+    torch.testing.assert_close(target, expected_velocity)
 
 
 def test_flow_matching_target_selects_velocity_target():
@@ -183,6 +200,38 @@ def test_flow_matching_target_rejects_unsupported_prediction_type():
         flow_matching_target(z0, z1, "epsilon")
 
 
+def test_flow_matching_velocity_utility_path_computes_finite_loss():
+    config = DiffusionConfig(prediction_type="velocity", timestep_schedule="uniform")
+    z0 = torch.tensor(
+        [
+            [[1.0, 2.0], [3.0, 4.0]],
+            [[-1.0, -2.0], [-3.0, -4.0]],
+        ]
+    )
+    z1 = torch.tensor(
+        [
+            [[2.0, 4.0], [6.0, 8.0]],
+            [[0.0, 1.0], [2.0, 3.0]],
+        ]
+    )
+    timestep = sample_timestep(
+        config,
+        batch_size=z0.shape[0],
+        dtype=z0.dtype,
+        generator=torch.Generator().manual_seed(53),
+    )
+
+    z_t = linear_bridge(z0, z1, timestep)
+    target = flow_matching_target(z0, z1, config.prediction_type)
+    prediction = torch.zeros_like(z_t)
+    loss = flow_matching_loss(prediction, target)
+
+    assert z_t.shape == z0.shape
+    assert target.shape == z0.shape
+    assert loss.shape == torch.Size([])
+    assert torch.isfinite(loss).item()
+
+
 def test_flow_matching_loss_matches_unmasked_mse_loss():
     prediction = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]])
     target = torch.tensor([[[0.5, 1.5], [2.0, 6.0]]])
@@ -190,6 +239,19 @@ def test_flow_matching_loss_matches_unmasked_mse_loss():
     loss = flow_matching_loss(prediction, target)
 
     torch.testing.assert_close(loss, F.mse_loss(prediction, target))
+
+
+def test_x0_prediction_type_computes_loss_against_clean_latents():
+    config = DiffusionConfig(prediction_type="x0")
+    z0 = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]])
+    z1 = torch.tensor([[[5.0, 6.0], [7.0, 8.0]]])
+    prediction = torch.tensor([[[1.5, 2.5], [2.0, 6.0]]])
+
+    target = flow_matching_target(z0, z1, config.prediction_type)
+    loss = flow_matching_loss(prediction, target)
+
+    torch.testing.assert_close(target, z0)
+    torch.testing.assert_close(loss, F.mse_loss(prediction, z0))
 
 
 def test_flow_matching_loss_broadcasts_position_mask_across_latents():
