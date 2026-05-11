@@ -1,7 +1,10 @@
 import pytest
 
 from cola_dlm.evaluation import (
+    LambadaScore,
+    MultipleChoiceScore,
     PromptResult,
+    SquadScore,
     build_hellaswag_prompt,
     build_lambada_prompt,
     build_mmlu_prompt,
@@ -10,6 +13,12 @@ from cola_dlm.evaluation import (
     build_siqa_prompt,
     build_squad_prompt,
     build_story_cloze_prompt,
+    normalize_lambada_answer,
+    normalize_multiple_choice_text,
+    normalize_squad_answer,
+    score_lambada_answer,
+    score_multiple_choice_answer,
+    score_squad_answer,
 )
 
 
@@ -18,6 +27,9 @@ def test_evaluation_public_surface():
 
     assert evaluation.__all__ == (
         "PromptResult",
+        "LambadaScore",
+        "SquadScore",
+        "MultipleChoiceScore",
         "build_lambada_prompt",
         "build_mmlu_prompt",
         "build_siqa_prompt",
@@ -26,6 +38,12 @@ def test_evaluation_public_surface():
         "build_obqa_prompt",
         "build_race_prompt",
         "build_hellaswag_prompt",
+        "normalize_lambada_answer",
+        "normalize_squad_answer",
+        "normalize_multiple_choice_text",
+        "score_lambada_answer",
+        "score_squad_answer",
+        "score_multiple_choice_answer",
     )
 
 
@@ -36,6 +54,26 @@ def test_prompt_result_is_a_small_metadata_container():
     assert result.answer == "yes"
     assert result.choices == ()
     assert result.max_new_tokens == 32
+
+
+def test_score_results_are_small_metadata_containers():
+    assert LambadaScore(
+        exact_match=True,
+        normalized_generation="map",
+        normalized_target="map",
+    ).exact_match
+    assert SquadScore(
+        exact_match=True,
+        f1=1.0,
+        normalized_generation="blue bag",
+        normalized_answers=("blue bag",),
+    ).f1 == 1.0
+    assert MultipleChoiceScore(
+        exact_match=False,
+        normalized_generation="b",
+        normalized_answer="beta text",
+        normalized_choices=("alpha text", "beta text"),
+    ).normalized_answer == "beta text"
 
 
 def test_lambada_prompt_formats_final_completion_and_uses_default_tokens():
@@ -256,3 +294,110 @@ def test_max_new_tokens_can_be_overridden_on_multiple_choice_prompts():
 def test_prompt_builders_reject_invalid_max_new_tokens():
     with pytest.raises(ValueError, match="max_new_tokens must be a positive"):
         build_lambada_prompt("The final", "word", max_new_tokens=0)
+
+
+def test_lambada_and_squad_normalization_are_distinct():
+    text = "  Answer: The Hidden, MAP!  "
+
+    assert normalize_lambada_answer(text) == "the hidden, map"
+    assert normalize_squad_answer(text) == "hidden map"
+
+
+def test_squad_exact_match_and_f1_use_standard_cleanup():
+    exact = score_squad_answer(
+        "  Answer: The blue, bag!  ",
+        ["blue bag", "navy backpack"],
+    )
+    partial = score_squad_answer("blue cotton bag", "the blue bag")
+
+    assert exact.exact_match is True
+    assert exact.f1 == 1.0
+    assert exact.normalized_generation == "blue bag"
+    assert exact.normalized_answers == ("blue bag", "navy backpack")
+    assert partial.exact_match is False
+    assert partial.f1 == pytest.approx(0.8)
+
+
+def test_lambada_scoring_uses_short_completion_exact_match():
+    score = score_lambada_answer("  Completion: MAP!\nignored text", "map")
+
+    assert score.exact_match is True
+    assert score.normalized_generation == "map"
+    assert score.normalized_target == "map"
+
+
+def test_multiple_choice_normalization_accepts_minor_formatting_differences():
+    assert normalize_multiple_choice_text("  The Red Apple! ") == "the red apple"
+
+    score = score_multiple_choice_answer(
+        "Answer: B.  THE RED APPLE!",
+        "the red apple",
+        ["blue cup", "the red apple", "green pear"],
+    )
+
+    assert score.exact_match is True
+    assert score.normalized_generation == "the red apple"
+    assert score.normalized_answer == "the red apple"
+    assert score.normalized_choices == ("blue cup", "the red apple", "green pear")
+
+
+def test_multiple_choice_scoring_rejects_label_only_generation():
+    score = score_multiple_choice_answer(
+        "B",
+        "beta text",
+        ["alpha text", "beta text"],
+    )
+
+    assert score.exact_match is False
+    assert score.normalized_generation == "b"
+    assert score.normalized_answer == "beta text"
+
+
+def test_multiple_choice_scoring_does_not_strip_prefixes_from_option_text():
+    score = score_multiple_choice_answer(
+        "B",
+        "Answer: B",
+        ["alpha text", "Answer: B"],
+    )
+
+    assert score.exact_match is False
+    assert score.normalized_generation == "b"
+    assert score.normalized_answer == "answer: b"
+
+
+def test_multiple_choice_label_only_generation_can_match_literal_option_text():
+    score = score_multiple_choice_answer("B", "B", ["alpha text", "B"])
+
+    assert score.exact_match is True
+    assert score.normalized_generation == "b"
+    assert score.normalized_answer == "b"
+
+
+def test_end_to_end_fake_free_form_prompt_and_score():
+    prompt = build_squad_prompt(
+        context="Ada wrote the notes in London.",
+        question="Where did Ada write the notes?",
+        answer="London",
+    )
+    score = score_squad_answer(" Answer: the London! ", prompt.answer)
+
+    assert prompt.prompt.endswith("Answer:")
+    assert score.exact_match is True
+    assert score.f1 == 1.0
+
+
+def test_end_to_end_fake_multiple_choice_prompt_and_score():
+    prompt = build_obqa_prompt(
+        question="Which object is hot?",
+        choices=["ice cube", "red flame"],
+        answer="B",
+    )
+    score = score_multiple_choice_answer(
+        "Answer: B. Red Flame.",
+        prompt.answer,
+        prompt.choices,
+    )
+
+    assert prompt.answer == "red flame"
+    assert prompt.choices == ("ice cube", "red flame")
+    assert score.exact_match is True

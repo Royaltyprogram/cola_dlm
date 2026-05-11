@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+import string
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -21,6 +24,47 @@ class PromptResult:
     answer: str
     choices: tuple[str, ...] = ()
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS
+
+
+@dataclass(frozen=True)
+class LambadaScore:
+    """Exact-match result for a LAMBADA completion."""
+
+    exact_match: bool
+    normalized_generation: str
+    normalized_target: str
+
+
+@dataclass(frozen=True)
+class SquadScore:
+    """Exact match and token F1 for one SQuAD prediction."""
+
+    exact_match: bool
+    f1: float
+    normalized_generation: str
+    normalized_answers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MultipleChoiceScore:
+    """Exact-match result against canonical multiple-choice option text."""
+
+    exact_match: bool
+    normalized_generation: str
+    normalized_answer: str
+    normalized_choices: tuple[str, ...]
+
+
+_SQUAD_ARTICLES_RE = re.compile(r"\b(a|an|the)\b", flags=re.IGNORECASE)
+_GENERATED_PREFIX_RE = re.compile(
+    r"^\s*(?:answer|final answer|completion|response)\s*[:\-]\s*(?P<rest>\S.*)$",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_OPTION_MARKER_RE = re.compile(
+    r"^\s*(?:\([A-Z]\)|[A-Z][\.\):\-])\s*(?P<rest>\S.*)$",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_EDGE_PUNCTUATION = "\"'.,!?;:()[]{}"
 
 
 def build_lambada_prompt(
@@ -238,6 +282,91 @@ def build_hellaswag_prompt(
         answer=answer_text,
         choices=choice_texts,
         max_new_tokens=max_new_tokens,
+    )
+
+
+def normalize_lambada_answer(text: str) -> str:
+    """Normalize a short LAMBADA completion without SQuAD article cleanup."""
+
+    value = _score_text(text, "text", allow_empty=True)
+    value = _strip_generated_prefix(value)
+    value = _first_non_empty_line(value)
+    value = _collapse_whitespace(value)
+    value = _strip_edge_punctuation(value)
+    return value.lower()
+
+
+def normalize_squad_answer(text: str) -> str:
+    """Apply the standard SQuAD lowercase/punctuation/article cleanup."""
+
+    value = _score_text(text, "text", allow_empty=True)
+    value = _strip_generated_prefix(value).lower()
+    value = "".join(char for char in value if char not in string.punctuation)
+    value = _SQUAD_ARTICLES_RE.sub(" ", value)
+    return _collapse_whitespace(value)
+
+
+def normalize_multiple_choice_text(text: str) -> str:
+    """Normalize canonical multiple-choice option text."""
+
+    value = _score_text(text, "text", allow_empty=True)
+    value = _collapse_whitespace(value)
+    value = _strip_edge_punctuation(value)
+    return value.lower()
+
+
+def score_lambada_answer(generation: str, target: str) -> LambadaScore:
+    """Score a generated LAMBADA completion with exact match."""
+
+    normalized_generation = normalize_lambada_answer(generation)
+    normalized_target = normalize_lambada_answer(_clean_text(target, "target"))
+    return LambadaScore(
+        exact_match=normalized_generation == normalized_target,
+        normalized_generation=normalized_generation,
+        normalized_target=normalized_target,
+    )
+
+
+def score_squad_answer(
+    generation: str,
+    gold_answers: str | Sequence[str],
+) -> SquadScore:
+    """Score a generated SQuAD answer against one or more gold answers."""
+
+    normalized_generation = normalize_squad_answer(generation)
+    normalized_answers = tuple(
+        normalize_squad_answer(answer) for answer in _clean_gold_answers(gold_answers)
+    )
+    return SquadScore(
+        exact_match=normalized_generation in normalized_answers,
+        f1=max(
+            _squad_token_f1(normalized_generation, answer)
+            for answer in normalized_answers
+        ),
+        normalized_generation=normalized_generation,
+        normalized_answers=normalized_answers,
+    )
+
+
+def score_multiple_choice_answer(
+    generation: str,
+    answer: str,
+    choices: Sequence[str],
+) -> MultipleChoiceScore:
+    """Score a generated answer against canonical multiple-choice option text."""
+
+    choice_texts = _clean_choices(choices)
+    answer_text = _clean_answer_choice(answer, choice_texts)
+    normalized_generation = _normalize_generated_multiple_choice_text(generation)
+    normalized_answer = normalize_multiple_choice_text(answer_text)
+    normalized_choices = tuple(
+        normalize_multiple_choice_text(choice) for choice in choice_texts
+    )
+    return MultipleChoiceScore(
+        exact_match=normalized_generation == normalized_answer,
+        normalized_generation=normalized_generation,
+        normalized_answer=normalized_answer,
+        normalized_choices=normalized_choices,
     )
 
 
@@ -500,6 +629,81 @@ def _clean_answer_choice(answer: object, choices: tuple[str, ...]) -> str:
     return answer_text
 
 
+def _clean_gold_answers(gold_answers: str | Sequence[str]) -> tuple[str, ...]:
+    if isinstance(gold_answers, str):
+        return (_clean_text(gold_answers, "answer"),)
+    if not isinstance(gold_answers, Sequence):
+        raise ValueError("gold_answers must be a string or sequence of strings")
+    answers = tuple(_clean_text(answer, "answer") for answer in gold_answers)
+    if not answers:
+        raise ValueError("gold_answers must contain at least one answer")
+    return answers
+
+
+def _score_text(value: object, field: str, *, allow_empty: bool) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    text = value.strip()
+    if not text and not allow_empty:
+        raise ValueError(f"{field} must not be empty")
+    return text
+
+
+def _strip_generated_prefix(text: str) -> str:
+    match = _GENERATED_PREFIX_RE.match(text)
+    if match is None:
+        return text
+    rest = match.group("rest").strip()
+    return rest or text
+
+
+def _strip_option_marker(text: str) -> str:
+    match = _OPTION_MARKER_RE.match(text)
+    if match is None:
+        return text
+    rest = match.group("rest").strip()
+    return rest or text
+
+
+def _normalize_generated_multiple_choice_text(text: str) -> str:
+    value = _score_text(text, "text", allow_empty=True)
+    value = _strip_generated_prefix(value)
+    value = _strip_option_marker(value)
+    return normalize_multiple_choice_text(value)
+
+
+def _first_non_empty_line(text: str) -> str:
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            return line
+    return ""
+
+
+def _collapse_whitespace(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _strip_edge_punctuation(text: str) -> str:
+    return text.strip().strip(_EDGE_PUNCTUATION).strip()
+
+
+def _squad_token_f1(prediction: str, answer: str) -> float:
+    prediction_tokens = prediction.split()
+    answer_tokens = answer.split()
+    if not prediction_tokens or not answer_tokens:
+        return float(prediction_tokens == answer_tokens)
+
+    common = Counter(prediction_tokens) & Counter(answer_tokens)
+    num_same = sum(common.values())
+    if num_same == 0:
+        return 0.0
+
+    precision = num_same / len(prediction_tokens)
+    recall = num_same / len(answer_tokens)
+    return 2 * precision * recall / (precision + recall)
+
+
 def _prompt_result(
     *,
     prompt: str,
@@ -523,6 +727,9 @@ def _prompt_result(
 
 __all__ = (
     "PromptResult",
+    "LambadaScore",
+    "SquadScore",
+    "MultipleChoiceScore",
     "build_lambada_prompt",
     "build_mmlu_prompt",
     "build_siqa_prompt",
@@ -531,4 +738,10 @@ __all__ = (
     "build_obqa_prompt",
     "build_race_prompt",
     "build_hellaswag_prompt",
+    "normalize_lambada_answer",
+    "normalize_squad_answer",
+    "normalize_multiple_choice_text",
+    "score_lambada_answer",
+    "score_squad_answer",
+    "score_multiple_choice_answer",
 )
