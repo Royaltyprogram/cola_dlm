@@ -11,6 +11,7 @@ import torch.nn.functional as F
 
 from cola_dlm.block_causal_mask import build_packed_dit_inputs
 from cola_dlm.config import DiffusionConfig, Stage2Config
+from cola_dlm.diagnostics import VAEDiagnostics, compute_vae_diagnostics
 from cola_dlm.dit import BlockCausalTextDiT
 from cola_dlm.flow_matching import (
     flow_matching_loss as compute_flow_matching_loss,
@@ -23,7 +24,6 @@ from cola_dlm.vae import (
     TextVAE,
     TextVAEEncoder,
     TextVAEOutput,
-    vae_logsnr,
 )
 
 
@@ -41,12 +41,18 @@ class Stage2Loss:
     reconstruction_nll: torch.Tensor
     posterior_regularizer: torch.Tensor
     mask_loss: torch.Tensor
-    logsnr: torch.Tensor
+    diagnostics: VAEDiagnostics
+
+    @property
+    def logsnr(self) -> torch.Tensor:
+        """Return the VAE logSNR diagnostic."""
+
+        return self.diagnostics.logsnr
 
     def as_dict(self) -> dict[str, torch.Tensor]:
         """Return diagnostics with stable public names."""
 
-        return {
+        metrics = {
             "loss": self.loss,
             "vae_loss": self.vae_loss,
             "flow_matching_loss": self.flow_matching_loss,
@@ -56,6 +62,8 @@ class Stage2Loss:
             "mask_loss": self.mask_loss,
             "logsnr": self.logsnr,
         }
+        metrics.update(self.diagnostics.as_dict())
+        return metrics
 
 
 def create_frozen_reference_encoder(vae: TextVAE) -> TextVAEEncoder:
@@ -165,7 +173,7 @@ def compute_stage2_vae_loss(
         reference_posterior,
         attention_mask=attention_mask,
     )
-    logsnr = vae_logsnr(output.posterior.mu, output.posterior.logvar)
+    diagnostics = compute_vae_diagnostics(output, token_ids, attention_mask)
     flow_matching_loss = _zero_scalar_like(output.logits)
     vae_loss = (
         reconstruction_nll
@@ -185,7 +193,7 @@ def compute_stage2_vae_loss(
         reconstruction_nll=reconstruction_nll,
         posterior_regularizer=posterior_regularizer,
         mask_loss=mask_loss,
-        logsnr=logsnr,
+        diagnostics=diagnostics,
     )
 
 
@@ -335,7 +343,7 @@ def compute_stage2_loss(
         reconstruction_nll=vae_side_loss.reconstruction_nll,
         posterior_regularizer=vae_side_loss.posterior_regularizer,
         mask_loss=vae_side_loss.mask_loss,
-        logsnr=vae_side_loss.logsnr,
+        diagnostics=vae_side_loss.diagnostics,
     )
 
 

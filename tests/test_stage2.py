@@ -148,6 +148,7 @@ def test_stage2_loss_returns_scalar_frozen_output_fields():
     assert isinstance(loss, Stage2Loss)
     for name, value in loss.as_dict().items():
         assert value.shape == (), name
+        assert torch.isfinite(value), name
     with pytest.raises(FrozenInstanceError):
         loss.loss = torch.tensor(0.0)
 
@@ -170,6 +171,11 @@ def test_stage2_loss_as_dict_uses_stable_diagnostic_names():
         "posterior_regularizer",
         "mask_loss",
         "logsnr",
+        "reconstruction_accuracy",
+        "latent_norm_mean",
+        "latent_norm_std",
+        "posterior_variance_mean",
+        "posterior_variance_std",
     )
     assert diagnostics["loss"] is loss.loss
     assert diagnostics["vae_loss"] is loss.vae_loss
@@ -179,6 +185,20 @@ def test_stage2_loss_as_dict_uses_stable_diagnostic_names():
     assert diagnostics["posterior_regularizer"] is loss.posterior_regularizer
     assert diagnostics["mask_loss"] is loss.mask_loss
     assert diagnostics["logsnr"] is loss.logsnr
+    assert (
+        diagnostics["reconstruction_accuracy"]
+        is loss.diagnostics.reconstruction_accuracy
+    )
+    assert diagnostics["latent_norm_mean"] is loss.diagnostics.latent_norm_mean
+    assert diagnostics["latent_norm_std"] is loss.diagnostics.latent_norm_std
+    assert (
+        diagnostics["posterior_variance_mean"]
+        is loss.diagnostics.posterior_variance_mean
+    )
+    assert (
+        diagnostics["posterior_variance_std"]
+        is loss.diagnostics.posterior_variance_std
+    )
 
 
 def test_stage2_reconstruction_nll_matches_cross_entropy():
@@ -246,6 +266,7 @@ def test_attention_mask_restricts_reconstruction_and_reference_kl():
     expected_kl = torch.tensor((0.5 * 1.0**2 + 0.5 * 3.0**2) / 2.0)
     assert torch.allclose(loss.reconstruction_nll, expected_nll)
     assert torch.allclose(loss.reference_kl, expected_kl)
+    assert torch.allclose(loss.diagnostics.reconstruction_accuracy, torch.tensor(1.0))
 
 
 def test_stage2_mask_loss_handles_ignored_and_selected_labels():

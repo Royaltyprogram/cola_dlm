@@ -42,9 +42,17 @@ def test_stage1_cli_smoke_writes_checkpoint_config_and_jsonl(tmp_path):
 
     records = _read_jsonl(log_file)
     assert [record["step"] for record in records] == [1]
-    assert {"loss", "reconstruction_nll", "kl", "mask_loss", "logsnr", "lr"} <= set(
-        records[0]
-    )
+    assert {
+        "loss",
+        "reconstruction_nll",
+        "kl",
+        "mask_loss",
+        "logsnr",
+        "reconstruction_accuracy",
+        "latent_norm_mean",
+        "posterior_variance_mean",
+        "lr",
+    } <= set(records[0])
 
 
 def test_stage1_cli_resume_advances_from_saved_step(tmp_path):

@@ -48,9 +48,16 @@ def test_stage2_cli_smoke_writes_named_checkpoint_and_jsonl(tmp_path):
 
     records = _read_jsonl(log_file)
     assert [record["step"] for record in records] == [1]
-    assert {"loss", "vae_loss", "flow_matching_loss", "reference_kl"} <= set(
-        records[0]
-    )
+    assert {
+        "loss",
+        "vae_loss",
+        "flow_matching_loss",
+        "reference_kl",
+        "reconstruction_accuracy",
+        "logsnr",
+        "latent_norm_mean",
+        "posterior_variance_mean",
+    } <= set(records[0])
 
 
 def test_stage2_cli_resume_restores_states_advances_and_keeps_reference_frozen(

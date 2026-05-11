@@ -9,7 +9,8 @@ import torch
 import torch.nn.functional as F
 
 from cola_dlm.config import Stage1Config
-from cola_dlm.vae import TextVAE, TextVAEOutput, vae_logsnr
+from cola_dlm.diagnostics import VAEDiagnostics, compute_vae_diagnostics
+from cola_dlm.vae import TextVAE, TextVAEOutput
 
 
 _DEFAULT_MASK_IGNORE_INDEX = -100
@@ -23,18 +24,26 @@ class Stage1VAELoss:
     reconstruction_nll: torch.Tensor
     kl: torch.Tensor
     mask_loss: torch.Tensor
-    logsnr: torch.Tensor
+    diagnostics: VAEDiagnostics
+
+    @property
+    def logsnr(self) -> torch.Tensor:
+        """Return the VAE logSNR diagnostic."""
+
+        return self.diagnostics.logsnr
 
     def as_dict(self) -> dict[str, torch.Tensor]:
         """Return diagnostics with stable public names."""
 
-        return {
+        metrics = {
             "loss": self.loss,
             "reconstruction_nll": self.reconstruction_nll,
             "kl": self.kl,
             "mask_loss": self.mask_loss,
             "logsnr": self.logsnr,
         }
+        metrics.update(self.diagnostics.as_dict())
+        return metrics
 
 
 @dataclass(frozen=True)
@@ -125,14 +134,14 @@ def compute_stage1_vae_loss(
             ignore_index=mask_ignore_index,
             attention_mask=attention_mask,
         )
-    logsnr = vae_logsnr(output.posterior.mu, output.posterior.logvar)
+    diagnostics = compute_vae_diagnostics(output, token_ids, attention_mask)
     loss = reconstruction_nll + lambda_kl * kl + lambda_mask * mask_loss
     return Stage1VAELoss(
         loss=loss,
         reconstruction_nll=reconstruction_nll,
         kl=kl,
         mask_loss=mask_loss,
-        logsnr=logsnr,
+        diagnostics=diagnostics,
     )
 
 

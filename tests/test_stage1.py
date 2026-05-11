@@ -76,6 +76,23 @@ def test_stage1_kl_is_valid_token_average_and_weighted_in_loss():
     assert torch.allclose(loss.loss, expected_nll + 0.25 * expected_kl)
 
 
+def test_stage1_reconstruction_accuracy_ignores_attention_masked_tokens():
+    logits = torch.tensor([[[3.0, 0.0], [3.0, 0.0], [0.0, 3.0]]])
+    token_ids = torch.tensor([[0, 1, 1]])
+    attention_mask = torch.tensor([[True, False, True]])
+    output = _make_output(logits, kl=torch.zeros(1, 3))
+
+    loss = compute_stage1_vae_loss(
+        output,
+        token_ids,
+        attention_mask=attention_mask,
+        lambda_kl=0.0,
+    )
+
+    assert torch.allclose(loss.diagnostics.reconstruction_accuracy, torch.tensor(1.0))
+    assert torch.allclose(loss.as_dict()["reconstruction_accuracy"], torch.tensor(1.0))
+
+
 def test_stage1_config_weights_map_to_lambda_names(tiny_stage1_config):
     logits = torch.tensor([[[2.0, 0.0], [0.0, 2.0]]])
     token_ids = torch.tensor([[0, 1]])
@@ -126,8 +143,9 @@ def test_stage1_loss_returns_scalar_frozen_output_fields():
     loss = compute_stage1_vae_loss(output, token_ids)
 
     assert isinstance(loss, Stage1VAELoss)
-    for value in loss.as_dict().values():
+    for name, value in loss.as_dict().items():
         assert value.shape == ()
+        assert torch.isfinite(value), name
     assert torch.allclose(loss.logsnr, vae_logsnr(mu, logvar))
     with pytest.raises(FrozenInstanceError):
         loss.loss = torch.tensor(0.0)
@@ -147,12 +165,31 @@ def test_stage1_loss_as_dict_uses_stable_diagnostic_names():
         "kl",
         "mask_loss",
         "logsnr",
+        "reconstruction_accuracy",
+        "latent_norm_mean",
+        "latent_norm_std",
+        "posterior_variance_mean",
+        "posterior_variance_std",
     )
     assert diagnostics["loss"] is loss.loss
     assert diagnostics["reconstruction_nll"] is loss.reconstruction_nll
     assert diagnostics["kl"] is loss.kl
     assert diagnostics["mask_loss"] is loss.mask_loss
     assert diagnostics["logsnr"] is loss.logsnr
+    assert (
+        diagnostics["reconstruction_accuracy"]
+        is loss.diagnostics.reconstruction_accuracy
+    )
+    assert diagnostics["latent_norm_mean"] is loss.diagnostics.latent_norm_mean
+    assert diagnostics["latent_norm_std"] is loss.diagnostics.latent_norm_std
+    assert (
+        diagnostics["posterior_variance_mean"]
+        is loss.diagnostics.posterior_variance_mean
+    )
+    assert (
+        diagnostics["posterior_variance_std"]
+        is loss.diagnostics.posterior_variance_std
+    )
 
 
 def test_stage1_loss_components_are_scalar_on_output_device():
@@ -339,13 +376,7 @@ def test_stage1_pretraining_step_updates_parameter_and_returns_finite_loss(
         max_grad_norm=1.0,
     )
 
-    for value in (
-        loss.loss,
-        loss.reconstruction_nll,
-        loss.kl,
-        loss.mask_loss,
-        loss.logsnr,
-    ):
+    for value in loss.as_dict().values():
         assert value.shape == ()
         assert torch.isfinite(value)
     assert any(
