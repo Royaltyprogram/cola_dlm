@@ -13,6 +13,7 @@ from cola_dlm.stage2 import (
     compute_stage2_vae_loss,
     create_frozen_reference_encoder,
     reference_kl,
+    stage2_joint_training_step,
 )
 from cola_dlm.vae import (
     DiagonalGaussianPosterior,
@@ -31,12 +32,14 @@ def test_stage2_public_surface_starts_with_reference_encoder_helper():
         "reference_kl",
         "compute_stage2_vae_loss",
         "compute_stage2_loss",
+        "stage2_joint_training_step",
     )
     assert stage2.Stage2Loss is Stage2Loss
     assert stage2.create_frozen_reference_encoder is create_frozen_reference_encoder
     assert stage2.reference_kl is reference_kl
     assert stage2.compute_stage2_vae_loss is compute_stage2_vae_loss
     assert stage2.compute_stage2_loss is compute_stage2_loss
+    assert stage2.stage2_joint_training_step is stage2_joint_training_step
 
 
 def test_create_frozen_reference_encoder_copies_values_without_shared_storage(
@@ -448,6 +451,122 @@ def test_compute_stage2_loss_prediction_type_paths_are_finite(
     assert torch.isfinite(loss.flow_matching_loss)
 
 
+def test_stage2_joint_training_step_updates_trainable_modules_only(
+    tiny_stage2_config: Stage2Config,
+):
+    vae, reference_encoder, dit = _make_stage2_modules(tiny_stage2_config)
+    reference_encoder.train()
+    optimizer = torch.optim.AdamW(
+        list(vae.parameters()) + list(dit.parameters()),
+        lr=1.0e-3,
+        weight_decay=0.0,
+    )
+    token_ids = _make_stage2_token_ids(tiny_stage2_config)
+    vae_parameters = [parameter for parameter in vae.parameters()]
+    dit_parameters = [parameter for parameter in dit.parameters()]
+    reference_parameters = [parameter for parameter in reference_encoder.parameters()]
+    vae_before = _clone_parameters(vae_parameters)
+    dit_before = _clone_parameters(dit_parameters)
+    reference_before = _clone_parameters(reference_parameters)
+    for parameter in reference_parameters:
+        parameter.grad = torch.ones_like(parameter)
+
+    loss = stage2_joint_training_step(
+        vae,
+        reference_encoder,
+        dit,
+        optimizer,
+        token_ids,
+        stage2_config=tiny_stage2_config,
+        generator=torch.Generator().manual_seed(113),
+        max_grad_norm=1.0,
+    )
+
+    assert torch.isfinite(loss.loss)
+    assert _has_changed_parameter(vae_before, vae_parameters)
+    assert _has_changed_parameter(dit_before, dit_parameters)
+    for before, after in zip(reference_before, reference_parameters):
+        torch.testing.assert_close(before, after)
+        assert after.grad is None
+    assert reference_encoder.training is False
+
+
+def test_stage2_joint_training_step_validates_masks_and_weights(
+    tiny_stage2_config: Stage2Config,
+):
+    vae, reference_encoder, dit = _make_stage2_modules(tiny_stage2_config)
+    optimizer = torch.optim.AdamW(
+        list(vae.parameters()) + list(dit.parameters()),
+        lr=1.0e-3,
+    )
+    token_ids = _make_stage2_token_ids(tiny_stage2_config)
+    bad_attention_mask = torch.ones(
+        token_ids.shape[0],
+        token_ids.shape[1] + 1,
+        dtype=torch.bool,
+    )
+
+    with pytest.raises(ValueError, match="attention_mask must match token batch shape"):
+        stage2_joint_training_step(
+            vae,
+            reference_encoder,
+            dit,
+            optimizer,
+            token_ids,
+            attention_mask=bad_attention_mask,
+            stage2_config=tiny_stage2_config,
+        )
+
+    with pytest.raises(ValueError, match="lambda_flow_matching must be non-negative"):
+        stage2_joint_training_step(
+            vae,
+            reference_encoder,
+            dit,
+            optimizer,
+            token_ids,
+            stage2_config=tiny_stage2_config,
+            lambda_flow_matching=-0.1,
+        )
+
+
+def test_compute_stage2_loss_validates_token_ids(
+    tiny_stage2_config: Stage2Config,
+):
+    vae, reference_encoder, dit = _make_stage2_modules(tiny_stage2_config)
+    token_ids = _make_stage2_token_ids(tiny_stage2_config)
+
+    with pytest.raises(ValueError, match="token_ids must be a torch.long tensor"):
+        compute_stage2_loss(
+            vae,
+            reference_encoder,
+            dit,
+            token_ids.float(),
+            stage2_config=tiny_stage2_config,
+        )
+
+    negative_token_ids = token_ids.clone()
+    negative_token_ids[0, 0] = -1
+    with pytest.raises(ValueError, match="token_ids must be non-negative"):
+        compute_stage2_loss(
+            vae,
+            reference_encoder,
+            dit,
+            negative_token_ids,
+            stage2_config=tiny_stage2_config,
+        )
+
+    too_large_token_ids = token_ids.clone()
+    too_large_token_ids[0, 0] = tiny_stage2_config.vae.vocab_size
+    with pytest.raises(ValueError, match="token_ids must be less than vocab_size"):
+        compute_stage2_loss(
+            vae,
+            reference_encoder,
+            dit,
+            too_large_token_ids,
+            stage2_config=tiny_stage2_config,
+        )
+
+
 def _make_output(
     logits: torch.Tensor,
     *,
@@ -505,4 +624,18 @@ def _has_nonzero_grad(parameters) -> bool:
     return any(
         parameter.grad is not None and torch.count_nonzero(parameter.grad).item() > 0
         for parameter in parameters
+    )
+
+
+def _clone_parameters(parameters) -> list[torch.Tensor]:
+    return [parameter.detach().clone() for parameter in parameters]
+
+
+def _has_changed_parameter(
+    before_parameters: list[torch.Tensor],
+    after_parameters,
+) -> bool:
+    return any(
+        not torch.allclose(before, after.detach())
+        for before, after in zip(before_parameters, after_parameters)
     )

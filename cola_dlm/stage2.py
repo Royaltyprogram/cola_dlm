@@ -221,6 +221,16 @@ def compute_stage2_loss(
         _require_instance("reference_encoder", reference_encoder, TextVAEEncoder)
         _require_instance("dit", dit, BlockCausalTextDiT)
 
+    expected_sequence_length = (
+        stage2_config.vae.sequence_length
+        if stage2_config is not None
+        else dit.config.sequence_length
+    )
+    _validate_token_ids(
+        token_ids,
+        vocab_size=vae.encoder.vocab_size,
+        sequence_length=expected_sequence_length,
+    )
     (
         lambda_vae,
         lambda_flow_matching,
@@ -327,6 +337,67 @@ def compute_stage2_loss(
         mask_loss=vae_side_loss.mask_loss,
         logsnr=vae_side_loss.logsnr,
     )
+
+
+def stage2_joint_training_step(
+    vae: TextVAE,
+    reference_encoder: TextVAEEncoder,
+    dit: BlockCausalTextDiT,
+    optimizer: torch.optim.Optimizer,
+    token_ids: torch.Tensor,
+    *,
+    attention_mask: torch.Tensor | None = None,
+    mask_labels: torch.Tensor | None = None,
+    stage2_config: Stage2Config | None = None,
+    lambda_vae: float | None = None,
+    lambda_flow_matching: float | None = None,
+    lambda_reference_kl: float | None = None,
+    lambda_posterior_regularizer: float | None = None,
+    lambda_mask: float | None = None,
+    max_grad_norm: float | None = None,
+    generator: torch.Generator | None = None,
+    deterministic_vae: bool = False,
+    mask_ignore_index: int = _DEFAULT_MASK_IGNORE_INDEX,
+) -> Stage2Loss:
+    """Run one optimizer step for a tiny joint Stage 2 training batch."""
+
+    if not isinstance(optimizer, torch.optim.Optimizer):
+        raise TypeError("optimizer must be a torch.optim.Optimizer")
+    if max_grad_norm is not None:
+        _validate_non_negative_weight("max_grad_norm", max_grad_norm)
+
+    vae.train()
+    dit.train()
+    reference_encoder.eval()
+    reference_encoder.zero_grad(set_to_none=True)
+
+    loss = compute_stage2_loss(
+        vae,
+        reference_encoder,
+        dit,
+        token_ids,
+        attention_mask=attention_mask,
+        mask_labels=mask_labels,
+        stage2_config=stage2_config,
+        lambda_vae=lambda_vae,
+        lambda_flow_matching=lambda_flow_matching,
+        lambda_reference_kl=lambda_reference_kl,
+        lambda_posterior_regularizer=lambda_posterior_regularizer,
+        lambda_mask=lambda_mask,
+        generator=generator,
+        deterministic_vae=deterministic_vae,
+        mask_ignore_index=mask_ignore_index,
+    )
+
+    optimizer.zero_grad(set_to_none=True)
+    loss.loss.backward()
+    if max_grad_norm is not None:
+        torch.nn.utils.clip_grad_norm_(
+            list(vae.parameters()) + list(dit.parameters()),
+            max_grad_norm,
+        )
+    optimizer.step()
+    return loss
 
 
 def _validate_stage2_component_shapes(
@@ -575,10 +646,7 @@ def _validate_stage2_vae_loss_shapes(
 ) -> None:
     if output.logits.ndim != 3:
         raise ValueError("output.logits must be shaped [batch, seq, vocab]")
-    if token_ids.ndim != 2:
-        raise ValueError("token_ids must be shaped [batch, seq]")
-    if token_ids.dtype != torch.long:
-        raise ValueError("token_ids must be a torch.long tensor")
+    _validate_token_ids(token_ids, vocab_size=output.logits.shape[-1])
     if output.logits.shape[:2] != token_ids.shape:
         raise ValueError("output.logits and token_ids must share batch and seq shape")
     if output.logits.device != token_ids.device:
@@ -649,6 +717,31 @@ def _validate_attention_mask_for_shape(
         raise ValueError("attention_mask must select at least one token")
 
 
+def _validate_token_ids(
+    token_ids: torch.Tensor,
+    *,
+    vocab_size: int | None = None,
+    sequence_length: int | None = None,
+) -> None:
+    if not isinstance(token_ids, torch.Tensor):
+        raise TypeError("token_ids must be a torch.Tensor")
+    if token_ids.ndim != 2:
+        raise ValueError("token_ids must be shaped [batch, seq]")
+    if token_ids.dtype != torch.long:
+        raise ValueError("token_ids must be a torch.long tensor")
+    if token_ids.numel() == 0:
+        raise ValueError("token_ids must contain at least one token")
+    if sequence_length is not None and token_ids.shape[1] != sequence_length:
+        raise ValueError(
+            "token_ids sequence length must match expected sequence length "
+            f"(got {token_ids.shape[1]}, expected {sequence_length})"
+        )
+    if torch.any(token_ids < 0).item():
+        raise ValueError("token_ids must be non-negative")
+    if vocab_size is not None and torch.any(token_ids >= vocab_size).item():
+        raise ValueError("token_ids must be less than vocab_size")
+
+
 def _validate_mask_labels(mask_labels: torch.Tensor, token_ids: torch.Tensor) -> None:
     if mask_labels.shape != token_ids.shape:
         raise ValueError("mask_labels must match token_ids shape")
@@ -676,4 +769,5 @@ __all__ = (
     "reference_kl",
     "compute_stage2_vae_loss",
     "compute_stage2_loss",
+    "stage2_joint_training_step",
 )
