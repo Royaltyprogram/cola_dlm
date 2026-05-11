@@ -1,4 +1,4 @@
-"""Command line training entrypoint for Stage 1 TextVAE pretraining."""
+"""Command line training entrypoint for Stage 2 joint VAE-DiT training."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from cola_dlm.checkpointing import CheckpointError, load_checkpoint, save_checkpoint
-from cola_dlm.config import OptimizerConfig, Stage1Config
+from cola_dlm.config import OptimizerConfig, Stage2Config
 from cola_dlm.config_io import (
     config_from_dict,
     config_to_dict,
@@ -20,9 +20,13 @@ from cola_dlm.config_io import (
     save_config,
 )
 from cola_dlm.dataset import TokenizedTextDataset
+from cola_dlm.dit import BlockCausalTextDiT
 from cola_dlm.logging import JSONLMetricsLogger
 from cola_dlm.precision import bf16_autocast
-from cola_dlm.stage1 import stage1_pretraining_step
+from cola_dlm.stage2 import (
+    create_frozen_reference_encoder,
+    stage2_joint_training_step,
+)
 from cola_dlm.training_utils import (
     build_scheduler,
     cycle_batches,
@@ -31,12 +35,12 @@ from cola_dlm.training_utils import (
     resolve_positive_int,
     resolve_required,
 )
-from cola_dlm.vae import TextVAE
+from cola_dlm.vae import TextVAE, TextVAEEncoder
 
 
 @dataclass(frozen=True)
-class Stage1RunOptions:
-    """Resolved run options for a local Stage 1 training job."""
+class Stage2RunOptions:
+    """Resolved run options for a local Stage 2 training job."""
 
     data_files: tuple[Path, ...]
     output_dir: Path
@@ -49,10 +53,10 @@ class Stage1RunOptions:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the Stage 1 VAE trainer from command line arguments."""
+    """Run the Stage 2 joint trainer from command line arguments."""
 
     args = _build_parser().parse_args(argv)
-    loaded = load_config(args.config, Stage1Config)
+    loaded = load_config(args.config, Stage2Config)
     options = _resolve_options(args, loaded.metadata)
     train(options=options, config=loaded.config, resume=args.resume)
     return 0
@@ -60,11 +64,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def train(
     *,
-    options: Stage1RunOptions,
-    config: Stage1Config,
+    options: Stage2RunOptions,
+    config: Stage2Config,
     resume: str | Path | None = None,
 ) -> int:
-    """Train Stage 1 until ``options.max_steps`` and return the final step."""
+    """Train Stage 2 until ``options.max_steps`` and return the final step."""
 
     torch.manual_seed(options.seed)
     if options.device.type == "cuda":
@@ -84,8 +88,10 @@ def train(
     dataloader = DataLoader(dataset, batch_size=options.batch_size, shuffle=False)
     batches = cycle_batches(dataloader)
 
-    model = TextVAE(config.vae).to(options.device)
-    optimizer = _build_optimizer(model, config.optimizer)
+    vae = TextVAE(config.vae).to(options.device)
+    dit = BlockCausalTextDiT(config.dit).to(options.device)
+    reference_encoder = create_frozen_reference_encoder(vae).to(options.device)
+    optimizer = _build_optimizer(vae, dit, config.optimizer, config.vae_dit_lr_ratio)
     scheduler = build_scheduler(
         optimizer,
         config.optimizer,
@@ -94,9 +100,10 @@ def train(
 
     global_step = 0
     if resume is not None:
-        global_step = _load_resume_checkpoint(
+        global_step, reference_encoder = _load_resume_checkpoint(
             resume,
-            model=model,
+            vae=vae,
+            dit=dit,
             optimizer=optimizer,
             scheduler=scheduler,
             config=config,
@@ -113,18 +120,20 @@ def train(
             token_ids = batch["input_ids"].to(options.device)
             attention_mask = batch["attention_mask"].to(options.device)
             step = global_step + 1
-            lr = optimizer.param_groups[0]["lr"]
+            lr_metrics = _learning_rates(optimizer)
 
             with bf16_autocast(
                 options.device,
                 enabled=config.optimizer.precision.lower() == "bf16",
             ):
-                loss = stage1_pretraining_step(
-                    model,
+                loss = stage2_joint_training_step(
+                    vae,
+                    reference_encoder,
+                    dit,
                     optimizer,
                     token_ids,
                     attention_mask=attention_mask,
-                    stage1_config=config,
+                    stage2_config=config,
                     max_grad_norm=config.optimizer.grad_clip,
                 )
 
@@ -133,21 +142,23 @@ def train(
 
             if step % options.log_every == 0:
                 metrics = loss.as_dict()
-                logger.log(step, {**metrics, "lr": lr})
+                logger.log(step, {**metrics, **lr_metrics})
 
             if step % options.checkpoint_every == 0:
-                _save_stage1_checkpoint(
+                _save_stage2_checkpoint(
                     checkpoint_dir / f"step_{step:08d}.pt",
-                    model=model,
+                    vae=vae,
+                    dit=dit,
                     optimizer=optimizer,
                     scheduler=scheduler,
                     step=step,
                     config=checkpoint_config,
                 )
 
-    _save_stage1_checkpoint(
+    _save_stage2_checkpoint(
         checkpoint_dir / "final.pt",
-        model=model,
+        vae=vae,
+        dit=dit,
         optimizer=optimizer,
         scheduler=scheduler,
         step=global_step,
@@ -158,9 +169,9 @@ def train(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Train a Stage 1 TextVAE on local token id files.",
+        description="Train Stage 2 VAE-DiT jointly on local token id files.",
     )
-    parser.add_argument("--config", required=True, help="Path to a Stage 1 JSON recipe.")
+    parser.add_argument("--config", required=True, help="Path to a Stage 2 JSON recipe.")
     parser.add_argument(
         "--data",
         action="extend",
@@ -182,7 +193,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _resolve_options(
     args: argparse.Namespace,
     metadata: Mapping[str, Any],
-) -> Stage1RunOptions:
+) -> Stage2RunOptions:
     data_files = resolve_data_files(args.data, metadata)
     output_dir = Path(resolve_required(args.output_dir, metadata, "output_dir"))
     max_steps = resolve_positive_int(args.max_steps, metadata, "max_steps")
@@ -195,7 +206,7 @@ def _resolve_options(
     log_every = resolve_positive_int(args.log_every, metadata, "log_every")
     seed = resolve_non_negative_int(args.seed, metadata, "seed", default=0)
     device = torch.device(args.device or metadata.get("device", "cpu"))
-    return Stage1RunOptions(
+    return Stage2RunOptions(
         data_files=data_files,
         output_dir=output_dir,
         max_steps=max_steps,
@@ -208,34 +219,69 @@ def _resolve_options(
 
 
 def _build_optimizer(
-    model: torch.nn.Module,
+    vae: TextVAE,
+    dit: BlockCausalTextDiT,
     optimizer_config: OptimizerConfig,
+    vae_dit_lr_ratio: float,
 ) -> torch.optim.Optimizer:
     if optimizer_config.name.lower() != "adamw":
         raise ValueError(
-            f"Stage 1 CLI only supports AdamW, got {optimizer_config.name!r}"
+            f"Stage 2 CLI only supports AdamW, got {optimizer_config.name!r}"
         )
+
+    vae_parameters = [
+        parameter for parameter in vae.parameters() if parameter.requires_grad
+    ]
+    dit_parameters = [
+        parameter for parameter in dit.parameters() if parameter.requires_grad
+    ]
+    if not vae_parameters:
+        raise ValueError("VAE must expose at least one trainable parameter")
+    if not dit_parameters:
+        raise ValueError("DiT must expose at least one trainable parameter")
+
+    if vae_dit_lr_ratio == 1.0:
+        parameter_groups: Any = vae_parameters + dit_parameters
+    else:
+        parameter_groups = [
+            {
+                "params": vae_parameters,
+                "lr": optimizer_config.peak_lr * vae_dit_lr_ratio,
+            },
+            {"params": dit_parameters, "lr": optimizer_config.peak_lr},
+        ]
+
     return torch.optim.AdamW(
-        model.parameters(),
+        parameter_groups,
         lr=optimizer_config.peak_lr,
         betas=optimizer_config.betas,
         weight_decay=optimizer_config.weight_decay,
     )
 
 
+def _learning_rates(optimizer: torch.optim.Optimizer) -> dict[str, float]:
+    if len(optimizer.param_groups) == 1:
+        return {"lr": float(optimizer.param_groups[0]["lr"])}
+    return {
+        "vae_lr": float(optimizer.param_groups[0]["lr"]),
+        "dit_lr": float(optimizer.param_groups[1]["lr"]),
+    }
+
+
 def _load_resume_checkpoint(
     path: str | Path,
     *,
-    model: TextVAE,
+    vae: TextVAE,
+    dit: BlockCausalTextDiT,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler.LRScheduler,
-    config: Stage1Config,
+    config: Stage2Config,
     device: torch.device,
-) -> int:
+) -> tuple[int, TextVAEEncoder]:
     try:
         loaded = load_checkpoint(
             path,
-            model=model,
+            extra_models={"vae": vae, "dit": dit},
             optimizer=optimizer,
             scheduler=scheduler,
             map_location=device,
@@ -246,22 +292,25 @@ def _load_resume_checkpoint(
         raise CheckpointError(f"Resume checkpoint is incompatible: {exc}") from exc
 
     try:
-        checkpoint_config = config_from_dict(Stage1Config, loaded.config["config"])
+        checkpoint_config = config_from_dict(Stage2Config, loaded.config["config"])
     except (KeyError, TypeError, ValueError) as exc:
         raise CheckpointError(
-            "Resume checkpoint is incompatible: missing Stage 1 config"
+            "Resume checkpoint is incompatible: missing Stage 2 config"
         ) from exc
     if checkpoint_config != config:
         raise CheckpointError(
-            "Resume checkpoint is incompatible with the requested Stage 1 config"
+            "Resume checkpoint is incompatible with the requested Stage 2 config"
         )
-    return loaded.step
+
+    reference_encoder = create_frozen_reference_encoder(vae).to(device)
+    return loaded.step, reference_encoder
 
 
-def _save_stage1_checkpoint(
+def _save_stage2_checkpoint(
     path: Path,
     *,
-    model: TextVAE,
+    vae: TextVAE,
+    dit: BlockCausalTextDiT,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler.LRScheduler,
     step: int,
@@ -269,23 +318,23 @@ def _save_stage1_checkpoint(
 ) -> None:
     save_checkpoint(
         path,
-        model=model,
+        extra_models={"vae": vae, "dit": dit},
         optimizer=optimizer,
         scheduler=scheduler,
         step=step,
         config=config,
-        metadata={"stage": "stage1"},
+        metadata={"stage": "stage2"},
     )
 
 
 def _checkpoint_config(
-    config: Stage1Config,
+    config: Stage2Config,
     run_metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
     return {"config": config_to_dict(config), **dict(run_metadata)}
 
 
-def _run_metadata(options: Stage1RunOptions) -> dict[str, Any]:
+def _run_metadata(options: Stage2RunOptions) -> dict[str, Any]:
     return {
         "data_files": [str(path) for path in options.data_files],
         "output_dir": str(options.output_dir),

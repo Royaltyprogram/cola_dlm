@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 train_vae_stage1 = "cola_dlm.train_vae_stage1:main"
+train_stage2 = "cola_dlm.train_stage2:main"
 
 [project.optional-dependencies]
 tokenizer = [
