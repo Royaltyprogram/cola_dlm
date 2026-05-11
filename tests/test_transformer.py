@@ -1,7 +1,13 @@
 import pytest
 import torch
 
-from cola_dlm.transformer import FeedForward, OutputProjection, RMSNorm, TokenEmbedding
+from cola_dlm.transformer import (
+    FeedForward,
+    OutputProjection,
+    RMSNorm,
+    RotaryEmbedding,
+    TokenEmbedding,
+)
 
 
 def test_transformer_public_exports_are_core_helpers():
@@ -12,6 +18,7 @@ def test_transformer_public_exports_are_core_helpers():
         "OutputProjection",
         "RMSNorm",
         "FeedForward",
+        "RotaryEmbedding",
     )
 
 
@@ -64,3 +71,36 @@ def test_feed_forward_preserves_hidden_shape(activation):
 def test_feed_forward_rejects_unknown_activation():
     with pytest.raises(ValueError, match="activation must be 'gelu' or 'silu'"):
         FeedForward(hidden_size=8, ffn_size=16, activation="relu")
+
+
+def test_rotary_embedding_preserves_query_key_shapes_and_dtype():
+    rotary = RotaryEmbedding()
+    query = torch.randn(2, 3, 4, 6, dtype=torch.float64)
+    key = torch.randn(2, 3, 4, 6, dtype=torch.float64)
+
+    rotated_query, rotated_key = rotary(query, key)
+
+    assert rotated_query.shape == query.shape
+    assert rotated_key.shape == key.shape
+    assert rotated_query.dtype == query.dtype
+    assert rotated_key.dtype == key.dtype
+
+
+def test_rotary_embedding_rejects_odd_head_dim():
+    rotary = RotaryEmbedding()
+    query = torch.randn(1, 2, 3, 5)
+    key = torch.randn(1, 2, 3, 5)
+
+    with pytest.raises(ValueError, match="head_dim must be even"):
+        rotary(query, key)
+
+
+def test_rotary_embedding_keeps_first_position_unchanged():
+    rotary = RotaryEmbedding()
+    query = torch.tensor([[[[1.0, 2.0, 3.0, 4.0], [2.0, 4.0, 6.0, 8.0]]]])
+    key = torch.tensor([[[[4.0, 3.0, 2.0, 1.0], [8.0, 6.0, 4.0, 2.0]]]])
+
+    rotated_query, rotated_key = rotary(query, key)
+
+    assert torch.allclose(rotated_query[:, :, 0, :], query[:, :, 0, :])
+    assert torch.allclose(rotated_key[:, :, 0, :], key[:, :, 0, :])
