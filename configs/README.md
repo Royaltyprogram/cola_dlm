@@ -16,3 +16,8 @@ run_metadata = loaded.metadata
 The tiny-debug recipes use the same small dimensions as the pytest fixtures and
 set only a couple of local training steps. The paper recipes mirror the current
 dataclass defaults in `cola_dlm/config.py`.
+
+Sampling can use `--prompt-token-ids` directly, which is the preferred smoke-test
+path because it avoids tokenizer dependencies. `--prompt` is available for local
+experiments, but its offline fallback is a deterministic byte tokenizer and does
+not reproduce OLMo-compatible token ids.
