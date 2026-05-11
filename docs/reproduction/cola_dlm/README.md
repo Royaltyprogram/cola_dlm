@@ -10,6 +10,7 @@ Files:
 - `00_context.md`: architecture, losses, training setup, inference, unresolved implementation details.
 - `01_figures.md`: downloaded figure inventory and notes on which figures matter for implementation.
 - `02_pr_plan.md`: large implementation PR sequence for reproducing Cola DLM.
+- `paper_scale_config.md`: paper-scale defaults and memory-planning notes.
 - `figures/`: copied/downloaded figure assets.
 - `source_cache/`: raw HTML and arXiv source cache used for extraction.
 

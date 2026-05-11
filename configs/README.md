@@ -31,6 +31,12 @@ extends `configs/paper/stage2_paper_base.json`, which holds the paper-scale VAE,
 DiT, diffusion, optimizer, batch, and token-count defaults traced to
 `docs/reproduction/cola_dlm/00_context.md`.
 
+The paper-scale recipes are for configuration review, reporting, and generated
+parameter-count audits in this repo. They are not supported local training or
+smoke-test recipes. See
+`docs/reproduction/cola_dlm/paper_scale_config.md` for the paper defaults and
+memory-planning notes.
+
 Sampling can use `--prompt-token-ids` directly, which is the preferred smoke-test
 path because it avoids tokenizer dependencies. `--prompt` is available for local
 experiments, but its offline fallback is a deterministic byte tokenizer and does
