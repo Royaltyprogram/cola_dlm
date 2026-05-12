@@ -1,4 +1,5 @@
 # Cola DLM
+**ITS PREVIEW. NOT READY FOR LARGE SCALE TRAINING YET.**
 
 Local, readable reproduction of the Cola DLM architecture described in the
 reproduction notes under `docs/reproduction/cola_dlm/`. The code is organized as
