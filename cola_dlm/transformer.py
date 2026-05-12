@@ -394,10 +394,12 @@ def _normalize_attention_mask(
     if attention_mask.ndim == 2:
         if attention_mask.shape == (seq_len, seq_len):
             mask = attention_mask.unsqueeze(0).unsqueeze(0)
-        elif is_boolean_mask and attention_mask.shape == (batch_size, seq_len):
+        elif attention_mask.shape == (batch_size, seq_len):
             mask = attention_mask[:, None, None, :]
         else:
-            raise ValueError("2D attention_mask must be shaped [seq, seq]")
+            raise ValueError(
+                "2D attention_mask must be shaped [seq, seq] or [batch, seq]"
+            )
     elif attention_mask.ndim == 3:
         if attention_mask.shape[-2:] != (seq_len, seq_len):
             raise ValueError("3D attention_mask must be shaped [batch, seq, seq]")
@@ -416,8 +418,8 @@ def _normalize_attention_mask(
         mask = attention_mask
     else:
         raise ValueError(
-            "attention_mask must be shaped [seq, seq], [batch, seq, seq], "
-            "or [batch, heads, seq, seq]"
+            "attention_mask must be shaped [seq, seq], [batch, seq], "
+            "[batch, seq, seq], or [batch, heads, seq, seq]"
         )
 
     mask = mask.to(device=device)

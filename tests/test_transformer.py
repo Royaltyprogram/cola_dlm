@@ -213,6 +213,25 @@ def test_multi_head_attention_accepts_boolean_batch_key_padding_mask():
     assert torch.allclose(output, expected)
 
 
+def test_multi_head_attention_accepts_float_batch_key_additive_mask():
+    torch.manual_seed(0)
+    attention = MultiHeadAttention(hidden_size=4, num_heads=2, dropout=0.0)
+    attention.eval()
+    hidden_states = torch.randn(2, 3, 4)
+    key_additive_mask = torch.tensor(
+        [
+            [0.0, -100.0, 0.0],
+            [-100.0, 0.0, 0.0],
+        ]
+    )
+    explicit_mask = key_additive_mask[:, None, None, :].expand(2, 1, 3, 3)
+
+    output = attention(hidden_states, attention_mask=key_additive_mask)
+    explicit_output = attention(hidden_states, attention_mask=explicit_mask)
+
+    assert torch.allclose(output, explicit_output)
+
+
 def test_multi_head_attention_accepts_additive_attention_masks():
     attention = MultiHeadAttention(hidden_size=8, num_heads=2, dropout=0.0)
     hidden_states = torch.randn(2, 4, 8)
@@ -231,6 +250,18 @@ def test_multi_head_attention_rejects_unsupported_attention_mask_shape():
 
     with pytest.raises(ValueError, match="attention_mask must be shaped"):
         attention(hidden_states, attention_mask=one_dimensional_mask)
+
+
+def test_multi_head_attention_rejects_invalid_2d_attention_mask_shape():
+    attention = MultiHeadAttention(hidden_size=2, num_heads=1, dropout=0.0)
+    hidden_states = torch.randn(2, 3, 2)
+    invalid_mask = torch.ones(2, 2, dtype=torch.bool)
+
+    with pytest.raises(
+        ValueError,
+        match=r"2D attention_mask must be shaped \[seq, seq\] or \[batch, seq\]",
+    ):
+        attention(hidden_states, attention_mask=invalid_mask)
 
 
 def test_transformer_block_preserves_hidden_shape_with_mask_and_causal_flag():
