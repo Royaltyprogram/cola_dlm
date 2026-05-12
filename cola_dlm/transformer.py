@@ -392,9 +392,12 @@ def _normalize_attention_mask(
         raise ValueError("attention_mask must be a bool or floating point tensor")
 
     if attention_mask.ndim == 2:
-        if attention_mask.shape != (seq_len, seq_len):
+        if attention_mask.shape == (seq_len, seq_len):
+            mask = attention_mask.unsqueeze(0).unsqueeze(0)
+        elif is_boolean_mask and attention_mask.shape == (batch_size, seq_len):
+            mask = attention_mask[:, None, None, :]
+        else:
             raise ValueError("2D attention_mask must be shaped [seq, seq]")
-        mask = attention_mask.unsqueeze(0).unsqueeze(0)
     elif attention_mask.ndim == 3:
         if attention_mask.shape[-2:] != (seq_len, seq_len):
             raise ValueError("3D attention_mask must be shaped [batch, seq, seq]")

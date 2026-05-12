@@ -175,6 +175,44 @@ def test_multi_head_attention_boolean_mask_uses_true_for_allowed_positions():
     assert torch.allclose(output, expected)
 
 
+def test_multi_head_attention_accepts_boolean_batch_key_padding_mask():
+    attention = MultiHeadAttention(hidden_size=2, num_heads=1, dropout=0.0)
+    attention.eval()
+    with torch.no_grad():
+        # Zero query/key scores make each allowed value receive equal attention.
+        attention.query_projection.weight.zero_()
+        attention.query_projection.bias.zero_()
+        attention.key_projection.weight.zero_()
+        attention.key_projection.bias.zero_()
+        attention.value_projection.weight.copy_(torch.eye(2))
+        attention.value_projection.bias.zero_()
+        attention.output_projection.weight.copy_(torch.eye(2))
+        attention.output_projection.bias.zero_()
+
+    hidden_states = torch.tensor(
+        [
+            [[1.0, 0.0], [0.0, 2.0], [3.0, 4.0]],
+            [[10.0, 0.0], [0.0, 20.0], [30.0, 40.0]],
+        ]
+    )
+    key_padding_mask = torch.tensor(
+        [
+            [True, False, True],
+            [False, True, False],
+        ]
+    )
+
+    output = attention(hidden_states, attention_mask=key_padding_mask)
+
+    expected = torch.tensor(
+        [
+            [[2.0, 2.0], [2.0, 2.0], [2.0, 2.0]],
+            [[0.0, 20.0], [0.0, 20.0], [0.0, 20.0]],
+        ]
+    )
+    assert torch.allclose(output, expected)
+
+
 def test_multi_head_attention_accepts_additive_attention_masks():
     attention = MultiHeadAttention(hidden_size=8, num_heads=2, dropout=0.0)
     hidden_states = torch.randn(2, 4, 8)
