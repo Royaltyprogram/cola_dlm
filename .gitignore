@@ -1,2 +1,8 @@
-# Documentation and reproduction materials (local only; not pushed)
-docs/
+# Documentation and reproduction materials are local-only unless explicitly
+# unignored as a committed result artifact.
+docs/*
+!docs/reproduction/
+docs/reproduction/*
+!docs/reproduction/cola_dlm/
+docs/reproduction/cola_dlm/*
+!docs/reproduction/cola_dlm/modal_gpu_validation.md
