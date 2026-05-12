@@ -39,10 +39,23 @@ python -m pytest
 python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no cuda')"
 ```
 
-If you want to prove actual GPU viability, run the Stage 1 and Stage 2 CLIs for
-at least one tiny step on a CUDA device, then run the sampler from the produced
-checkpoint. The tiny recipes are intended for this kind of smoke test; the
-paper-scale recipes are for inspection and parameter accounting.
+Opt-in Modal GPU smoke test:
+
+```bash
+source "$(git rev-parse --show-toplevel)/myenv/bin/activate" && modal run scripts/modal_gpu_smoke.py
+```
+
+This is a synthetic Stage 2 smoke test with one optimizer step, not a benchmark
+or training recipe. It requires Modal authentication and requests a small remote
+GPU. Normal `pytest` runs do not require Modal, CUDA, or GPU credentials. A
+successful run prints compact JSON fields including `success`, `device`,
+`cuda_available`, `loss`, and model/tensor device placement.
+
+If you want to prove the CLI, checkpoint, and sampler path on a GPU, run the
+Stage 1 and Stage 2 CLIs for at least one tiny step on a CUDA device, then run
+the sampler from the produced checkpoint. The tiny recipes are intended for this
+kind of smoke test; the paper-scale recipes are for inspection and parameter
+accounting.
 
 ## Quick Start
 
