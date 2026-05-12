@@ -49,8 +49,9 @@ This is a tiny synthetic validation sweep, not a benchmark or training recipe.
 It requires Modal authentication and requests a small remote GPU. Normal
 `pytest` runs do not require Modal, CUDA, or GPU credentials. A successful run
 prints compact JSON fields including CUDA metadata, TextVAE, Stage 2, inference,
-loss, and model/tensor device placement checks. The 2026-05-12 Modal attempt is
-recorded in `docs/reproduction/cola_dlm/modal_gpu_validation.md`.
+loss, and model/tensor device placement checks. The 2026-05-12 successful Modal
+T4 validation result is recorded in
+`docs/reproduction/cola_dlm/modal_gpu_validation.md`.
 
 If you want to prove the CLI, checkpoint, and sampler path on a GPU, run the
 Stage 1 and Stage 2 CLIs for at least one tiny step on a CUDA device, then run
