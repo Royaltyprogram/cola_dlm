@@ -142,7 +142,7 @@ def test_tiny_modal_gpu_validation_result_is_json_serializable():
     assert '"success": true' in encoded
 
 
-def test_modal_gpu_smoke_script_declares_modal_entrypoint_without_importing_modal():
+def test_modal_gpu_smoke_script_declares_validation_entrypoint_without_importing_modal():
     source = MODAL_SCRIPT.read_text()
     tree = ast.parse(source)
 
@@ -154,6 +154,19 @@ def test_modal_gpu_smoke_script_declares_modal_entrypoint_without_importing_moda
     assert _calls_modal_app(tree)
     assert '.pip_install("torch")' in source
     assert '.add_local_python_source("cola_dlm")' in source
+    assert "run_tiny_modal_gpu_validation" in source
+    assert "run_tiny_stage2_smoke_step" not in source
+    assert 'device="cuda"' in source
+    assert "require_cuda=True" in source
+    assert "cuda_metadata" in source
+    assert "current_device_index" in source
+    assert "torch.cuda.device_count()" in source
+    assert "torch.cuda.current_device()" in source
+    assert "torch.cuda.get_device_name(0)" in source
+    assert 'separators=(",", ":")' in source
+    assert "allow_nan=False" in source
+    assert "indent=" not in source
+    assert "SystemExit(1)" in source
 
     function_kwargs = {
         keyword.arg: ast.literal_eval(keyword.value)
