@@ -1,4 +1,5 @@
 import ast
+import json
 import math
 from pathlib import Path
 
@@ -6,6 +7,7 @@ import pytest
 
 from cola_dlm.modal_gpu_smoke import (
     build_tiny_modal_smoke_config,
+    run_tiny_modal_gpu_validation,
     run_tiny_stage2_smoke_step,
 )
 
@@ -49,6 +51,95 @@ def test_tiny_stage2_smoke_step_reports_cpu_placement():
 def test_tiny_stage2_smoke_step_requires_cuda_when_requested():
     with pytest.raises(RuntimeError, match="CUDA is required"):
         run_tiny_stage2_smoke_step(device="cpu", require_cuda=True)
+
+
+def test_tiny_modal_gpu_validation_runs_broader_cpu_checks():
+    result = run_tiny_modal_gpu_validation()
+
+    assert result["success"] is True
+    assert result["device"] == "cpu"
+    assert isinstance(result["cuda_available"], bool)
+    assert result["limitations"] == []
+    assert set(result["checks"]) == {
+        "text_vae",
+        "stage2_joint_training",
+        "inference_generate",
+    }
+
+    text_vae = result["checks"]["text_vae"]
+    assert text_vae["success"] is True
+    assert text_vae["loss_finite"] is True
+    assert math.isfinite(text_vae["loss"])
+    assert text_vae["devices_match"] is True
+    assert text_vae["trainable_parameter_changed"] is True
+
+    stage2 = result["checks"]["stage2_joint_training"]
+    assert stage2["success"] is True
+    assert stage2["loss_finite"] is True
+    assert math.isfinite(stage2["total_loss"])
+    assert stage2["devices_match"] is True
+    assert stage2["trainable_parameter_changed"] is True
+    assert stage2["steps"] == 1
+
+    inference = result["checks"]["inference_generate"]
+    assert inference["success"] is True
+    assert inference["skipped"] is False
+    assert inference["devices_match"] is True
+
+
+def test_tiny_modal_gpu_validation_reports_cpu_placement():
+    result = run_tiny_modal_gpu_validation()
+    text_vae = result["checks"]["text_vae"]
+    stage2 = result["checks"]["stage2_joint_training"]
+    inference = result["checks"]["inference_generate"]
+
+    for name in (
+        "loss_tensor_device",
+        "vae_parameter_device",
+        "token_device",
+        "mask_device",
+        "posterior_device",
+        "posterior_mu_device",
+        "posterior_logvar_device",
+        "latent_device",
+        "logits_device",
+    ):
+        assert text_vae[name] == "cpu"
+
+    for name in (
+        "loss_tensor_device",
+        "vae_parameter_device",
+        "reference_encoder_parameter_device",
+        "dit_parameter_device",
+        "token_device",
+        "mask_device",
+    ):
+        assert stage2[name] == "cpu"
+
+    for name in (
+        "generated_latent_device",
+        "all_latent_device",
+        "response_logits_device",
+        "response_token_device",
+        "token_device",
+        "mask_device",
+        "vae_parameter_device",
+        "dit_parameter_device",
+    ):
+        assert inference[name] == "cpu"
+
+
+def test_tiny_modal_gpu_validation_requires_cuda_when_requested():
+    with pytest.raises(RuntimeError, match="CUDA is required"):
+        run_tiny_modal_gpu_validation(device="cpu", require_cuda=True)
+
+
+def test_tiny_modal_gpu_validation_result_is_json_serializable():
+    result = run_tiny_modal_gpu_validation()
+
+    encoded = json.dumps(result, sort_keys=True)
+
+    assert '"success": true' in encoded
 
 
 def test_modal_gpu_smoke_script_declares_modal_entrypoint_without_importing_modal():
